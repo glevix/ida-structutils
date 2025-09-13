@@ -1,6 +1,6 @@
 # ida-structutils
 
-Utils for increased productivity with ida, like editing structs from the hexrays decompiler view
+Utils for increased productivity with ida, like editing structs from the hexrays decompiler view.
 Supports IDA9
 
 ## Installation
