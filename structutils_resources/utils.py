@@ -634,7 +634,74 @@ def get_vtable_size(ea):
     return count
 
 
+def create_vtable_entry(ea, offset):
 
+    print(f'Creating entry for offset {hex(offset)}')
+
+    ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+    default = f'int (*func_{hex(offset)})(void*);'
+
+    # Check if we can heuristically name the entry instead of just returning the default
+    if ptr_size == 8:
+        func_ea = ida_bytes.get_qword(ea+offset)
+    else:
+        func_ea = ida_bytes.get_dword(ea+offset)
+
+    if not func_ea:
+        print(f'No function')
+        return default
+
+    func_name = idaapi.get_ea_name(func_ea, idaapi.GN_SHORT|idaapi.GN_DEMANGLED)
+    if not func_name:
+        print(f'No function name')
+        return default
+
+    delim = func_name.find("(")
+    if delim != -1:
+        func_name = func_name[:delim]
+    else:
+        print(f'No parentheses')
+        return default
+
+    if '::' in func_name:
+        func_name =  func_name.split('::')[-1].strip()
+    else:
+        print(f'No scope delimiter')
+        return default
+
+    if '~' in func_name:
+        return f'int (*destructor_{hex(offset)})(void*);'
+
+    if func_name:
+        return f'int (*{func_name})(void*);'
+
+    print(f'No name')
+    return default
+
+
+
+
+def make_vtable_def(ea, name, count):
+
+    ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+    funcs = '\n'.join([create_vtable_entry(ea, i*ptr_size) for i in range(count)])
+    struct_def = f'struct {name} {{ \n{funcs}\n}};'
+    return struct_def
+
+
+def apply_struct(ea, struct_name):
+
+
+    tif = ida_typeinf.tinfo_t()
+    if not tif.get_named_type(struct_name):
+        print(f'Unable to retrieve {struct_name} structure')
+        return False
+
+    # apply the type to EA
+    ida_bytes.del_items(ea, 0, tif.get_size())
+    ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.TINFO_DEFINITE)
+
+    return True
 
 class AnalyzeVtable(actions.IdaViewPopupAction):
 
@@ -649,10 +716,32 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
         print(f'Analyzing vtable at {hex(ea)}')
         count = get_vtable_size(ea)
         if not count:
+            ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
             return
-        if ida_kernwin.ask_yn(0, f'Vtable at {hex(ea)} has {count} entries. Create and assign vtable struct?') != 1:
+
+        default_name = f'vtable_{hex(ea)}'
+        name = ida_kernwin.ask_str(default_name, 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
+        
+        if not name:
             return
-        print('Creating... NOT IMPLEMENTED')
+
+        tid = ida_typeinf.get_named_type_tid(name)
+        if tid != idaapi.BADADDR:
+            ida_kernwin.warning(f'Type {name} already exists')
+            return
+
+        struct_def = make_vtable_def(ea, name, count)
+        print(struct_def)
+
+        if ida_typeinf.idc_parse_types(struct_def, 0):
+            print(f'Failed')
+            return False
+
+        print(f'Created new struct type {name}')
+
+        if not apply_struct(ea, name):
+            ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
+            return
 
 
 
