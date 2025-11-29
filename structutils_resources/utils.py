@@ -2,7 +2,11 @@ import idaapi
 #import ida_struct
 import ida_funcs
 import ida_kernwin
+import ida_name
+import ida_ida
+import ida_bytes
 import ida_typeinf
+import ida_xref
 import idc
 import idautils
 from . import actions
@@ -511,6 +515,127 @@ class CommitType(actions.HexRaysPopupAction):
             return False
 
 
+
+
+def get_nearest_symbols(ea):
+    n = ida_name.get_nlist_size()
+
+    prev_sym = None, None
+    next_sym = None, None
+
+    for i in range(n):
+        sym_ea = ida_name.get_nlist_ea(i)
+
+        if sym_ea < ea:
+            prev_sym = (sym_ea, ida_name.get_nlist_name(i))
+        elif sym_ea > ea:
+            next_sym = (sym_ea, ida_name.get_nlist_name(i))
+            break
+
+    return prev_sym, next_sym
+
+def has_xrefs_to(ea):
+    """
+    Return True if 'ea' has any real code or data xrefs pointing to it.
+    Works in IDA 7.x → 9.x.
+    """
+    for xref in idautils.XrefsTo(ea):
+        t = xref.type
+        # Code reference flags
+        code_flags = ida_xref.fl_CF | ida_xref.fl_CN | ida_xref.fl_JF | ida_xref.fl_JN | ida_xref.fl_F
+        # Data reference flags
+        data_flags = ida_xref.dr_R | ida_xref.dr_W | ida_xref.dr_O
+        if t & (code_flags | data_flags):
+            return True
+    return False
+
+def ptr_points_to_code(ea):
+    """
+    Returns True if the memory at 'ea' contains a pointer to code.
+    """
+    # Get pointer size
+    ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+
+    # Read pointer value
+    if ptr_size == 8:
+        target_ea = ida_bytes.get_qword(ea)
+    else:
+        target_ea = ida_bytes.get_dword(ea)
+
+    if target_ea is None or target_ea == 0:
+        return False
+
+    # Check if target_ea is a function
+    if ida_funcs.get_func(target_ea):
+        return True
+
+    # Optionally, check if target_ea is an instruction (code)
+    flags = ida_bytes.get_full_flags(target_ea)
+    if ida_bytes.is_code(flags):
+        return True
+
+    return False
+
+def get_vtable_size(ea):
+
+    func = ida_funcs.get_func(ea)
+    if func:
+        ida_kernwin.warning(f'Error: {hex(ea)} is in a function - cannot be a vtable')
+        return 0
+
+    # Check surrounding symbols
+    name = ida_name.get_name(ea)
+    (prev_name_ea, prev_name), (next_name_ea, next_name) = get_nearest_symbols(ea)
+
+    if name:
+        print(f'Address {hex(ea)} has symbol {name}')
+    else:
+        print(f'Address {hex(ea)} has no symbol')
+    print(f'Previous symbol is at {hex(prev_name_ea)}: {prev_name} (distance: {hex(ea-prev_name_ea)})')
+    print(f'Next symbol is at {hex(next_name_ea)}: {next_name} (distance: {hex(next_name_ea-ea)})')
+
+    ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+
+    # The heuristic for finding the end of the vtable is whenever we reach:
+    # 1) A new symbol
+    # 2) An xreffed address
+    # 3) A non-code pointer
+
+    endea = ea
+    stop = False
+    while True:
+
+        print(f'Checking {hex(endea)}')
+
+        # Reached next symbol?
+        if endea == next_name_ea:
+            print(f'reached symbol')
+            stop = True
+
+        # Reached xref (ignore the possible xref to the vtable itself)?
+        if endea != ea:
+            if has_xrefs_to(endea):
+                print(f'reached xref')
+                stop = True
+
+        # Reached a non-code pointer?
+        if not ptr_points_to_code(endea):
+            print(f'reached non code pointer')
+            stop = True
+
+        if stop:
+            break
+        endea += ptr_size
+
+    count = (endea-ea)//ptr_size
+    print(f'vtable ends at {hex(endea)}')
+    print(f'vtable contains {count} functions')
+
+    return count
+
+
+
+
 class AnalyzeVtable(actions.IdaViewPopupAction):
 
     description = 'Analyze vtable'
@@ -520,7 +645,15 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
 
 
     def activate(self, ctx):
-        print(f'Activated!')
+        ea = ctx.cur_ea
+        print(f'Analyzing vtable at {hex(ea)}')
+        count = get_vtable_size(ea)
+        if not count:
+            return
+        if ida_kernwin.ask_yn(0, f'Vtable at {hex(ea)} has {count} entries. Create and assign vtable struct?') != 1:
+            return
+        print('Creating... NOT IMPLEMENTED')
+
 
 
 actions.action_manager.register(MakeMember())
