@@ -5,6 +5,26 @@ If anyone knows the source, I'd be happy to add an acknowledgment
 '''
 from collections import defaultdict
 import idaapi
+import ida_kernwin
+
+
+class IdaViewHook(ida_kernwin.UI_Hooks):
+
+    def __init__(self, name):
+        self.act_name = name
+
+    def finish_populating_widget_popup(self, widget, popup):
+        # We'll add our action to all "IDA View-*"s.
+        # If we wanted to add it only to "IDA View-A", we could
+        # also discriminate on the widget's title:
+        #
+        #  if ida_kernwin.get_widget_title(widget) == "IDA View-A":
+        #      ...
+        #
+        if ida_kernwin.get_widget_type(widget) == ida_kernwin.BWN_DISASM:
+            ida_kernwin.attach_action_to_popup(widget, popup, self.act_name, None)
+
+
 
 class HexRaysCallbackManager(object):
     def __init__(self):
@@ -41,6 +61,7 @@ class HexRaysEventHandler(object):
 class ActionManager(object):
     def __init__(self):
         self.__actions = []
+        self.__hooks = []
 
     def register(self, action):
         self.__actions.append(action)
@@ -49,6 +70,10 @@ class ActionManager(object):
             )
         if isinstance(action, HexRaysPopupAction):
             hx_callback_manager.register(idaapi.hxe_populating_popup, HexRaysPopupRequestHandler(action))
+        if isinstance(action, IdaViewPopupAction):
+            hook = IdaViewHook(action.name)
+            hook.Hook()
+            self.__hooks.append(hook)
 
     def initialize(self):
         pass
@@ -56,6 +81,10 @@ class ActionManager(object):
     def finalize(self):
         for action in self.__actions:
             idaapi.unregister_action(action.name)
+        for hook in self.__hooks:
+            hook.unhook()
+        self.__actions = []
+        self.__hooks = []
 
 action_manager = ActionManager()
 
@@ -123,3 +152,29 @@ class HexRaysPopupRequestHandler(HexRaysEventHandler):
         if self.__action.check(hx_view):
             idaapi.attach_action_to_popup(form, popup, self.__action.name, None)
         return 0
+
+
+class IdaViewPopupAction(Action):
+    """
+    Wrapper around Action. Represents Action which can be added to menu after right-clicking in Ida window.
+    Has `check` method that should tell whether Action should be added to popup menu when different items
+    are right-clicked.
+    Children of this class can also be fired by hot-key without right-clicking if one provided in `hotkey`
+    static member.
+    """
+
+    def __init__(self):
+        super(IdaViewPopupAction, self).__init__()
+
+    def activate(self, ctx):
+        # type: (idaapi.action_activation_ctx_t) -> None
+        raise NotImplementedError
+
+    def check(self, hx_view):
+        # type: (idaapi.vdui_t) -> bool
+        raise NotImplementedError
+
+    def update(self, ctx):
+        if ctx.widget_type == idaapi.BWN_DISASM:
+            return idaapi.AST_ENABLE_FOR_WIDGET
+        return idaapi.AST_DISABLE_FOR_WIDGET

@@ -510,7 +510,20 @@ class CommitType(actions.HexRaysPopupAction):
             print(f'Unsupported function expression type {expr_str(function.op)} - aborting')
             return False
 
+
+class AnalyzeVtable(actions.IdaViewPopupAction):
+
+    description = 'Analyze vtable'
+    
+    def __init__(self):
+        super(AnalyzeVtable, self).__init__()
+
+
+    def activate(self, ctx):
+        print(f'Activated!')
+
+
 actions.action_manager.register(MakeMember())
 actions.action_manager.register(MakeStruct())
 actions.action_manager.register(CommitType())
-        
+actions.action_manager.register(AnalyzeVtable())
