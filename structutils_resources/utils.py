@@ -11,6 +11,9 @@ import idc
 import idautils
 from . import actions
 
+class StructUtilsException(Exception):
+    pass
+
 '''
 IDA9 got rid of the ida_struct module, and with it the ida_struct.get_struc function
 '''
@@ -634,12 +637,12 @@ def get_vtable_size(ea):
     return count
 
 
-def create_vtable_entry(ea, offset):
+def create_vtable_entry(ea, offset, this_type='void', entries=None):
 
     print(f'Creating entry for offset {hex(offset)}')
 
     ptr_size = 8 if ida_ida.inf_is_64bit() else 4
-    default = f'int (*func_{hex(offset)})(void*);'
+    default = f'int (*func_{hex(offset)})({this_type});'
 
     # Check if we can heuristically name the entry instead of just returning the default
     if ptr_size == 8:
@@ -670,21 +673,23 @@ def create_vtable_entry(ea, offset):
         return default
 
     if '~' in func_name:
-        return f'int (*destructor_{hex(offset)})(void*);'
+        return f'int (*destructor_{hex(offset)})({this_type});'
 
     if func_name:
-        return f'int (*{func_name})(void*);'
+        #print(entries)
+        entries[func_name] = 1 if func_name not in entries else entries[func_name] + 1
+        suffix = '' if entries[func_name] == 1 else f'_{hex(offset)}'
+        return f'int (*{func_name}{suffix})({this_type});'
 
     print(f'No name')
     return default
 
 
-
-
-def make_vtable_def(ea, name, count):
+def make_vtable_def(ea, name, count, this_type):
 
     ptr_size = 8 if ida_ida.inf_is_64bit() else 4
-    funcs = '\n'.join([create_vtable_entry(ea, i*ptr_size) for i in range(count)])
+    entries = dict()
+    funcs = '\n'.join([create_vtable_entry(ea, i*ptr_size, this_type, entries) for i in range(count)])
     struct_def = f'struct {name} {{ \n{funcs}\n}};'
     return struct_def
 
@@ -719,8 +724,7 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
             ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
             return
 
-        default_name = f'vtable_{hex(ea)}'
-        name = ida_kernwin.ask_str(default_name, 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
+        name = ida_kernwin.ask_str(f'vtable_{hex(ea)}', 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
         
         if not name:
             return
@@ -730,12 +734,14 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
             ida_kernwin.warning(f'Type {name} already exists')
             return
 
-        struct_def = make_vtable_def(ea, name, count)
-        print(struct_def)
+        this_type = ida_kernwin.ask_str(f'void*', 0, f'Type of "this"?')
 
+        struct_def = make_vtable_def(ea, name, count, this_type)
+        
         if ida_typeinf.idc_parse_types(struct_def, 0):
-            print(f'Failed')
-            return False
+            ida_kernwin.warning(f'Could not parse struct definition')
+            print(struct_def)
+            return
 
         print(f'Created new struct type {name}')
 
@@ -743,9 +749,125 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
             ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
             return
 
+class SetVtable(actions.HexRaysPopupAction):
+
+    description = 'Set vtable'
+
+    def __init__(self):
+        super(SetVtable, self).__init__()
+
+    def check(self, hx_view):
+        # Only makes sense for expressions
+        if hx_view.item.citype != idaapi.VDI_EXPR:
+            return False
+
+        return True
+
+    def activate(self, ctx):
+
+        hx_view = idaapi.get_widget_vdui(ctx.widget)
+
+        # We need to propagate until we find the assignment op
+        e = hx_view.item.e
+        while e:
+            print(expr_str(e.op))
+            if e.op == idaapi.cot_asg:
+                break
+            if e.op == idaapi.cit_expr:
+                e = None
+                break
+            e = hx_view.cfunc.body.find_parent_of(e).to_specific_type
+
+        if not e:
+            ida_kernwin.warning(f'Could not find assignment expression')
+            return
+
+        self.ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+
+        # Start with the rhs - should be pointer to global vtable
+        try:
+            ea = self.resolve_vtable_expression(e.y)
+        except StructUtilsException as e:
+            ida_kernwin.warning(f'Failed to resolve vtable expression')
+            return
+
+        print(f'Got vtable address: {hex(ea)}')
+
+
+
+    def resolve_vtable_expression(self, e):
+
+        print(f'Resolving: {expr_str(e.op)}')
+
+        # Handle cast
+        if e.op == idaapi.cot_cast:
+            # Validate cast to pointer size... should we really bother?
+            if e.type.get_size() != self.ptr_size:
+                print(f'Error: Cast size of {e.type.get_size()} differs from pointer size of {self.ptr_size}')
+                raise StructUtilsException()
+            return self.resolve_vtable_expression(e.x)
+
+        # Handle addition
+        if e.op == idaapi.cot_add:
+            a = self.resolve_vtable_expression(e.x)
+            b = self.resolve_vtable_expression(e.y)
+            # Handle possilble pointer arithmetic
+            if e.x.type.is_ptr():
+                sz = e.x.type.get_pointed_object().get_size()
+                return a + sz*b
+            if e.y.type.is_ptr():
+                sz = e.y.type.get_pointed_object().get_size()
+                return b + sz*a
+
+        # Handle number
+        if e.op == idaapi.cot_num:
+            return e.numval()
+
+        # Handle reference
+        if e.op == idaapi.cot_ref:
+            if e.x.op != idaapi.cot_obj:
+                print(f'Error: Reference to non-obj expression: {expr_str(e.x.op)}')
+                raise StructUtilsException()
+            return self.resolve_vtable_expression(e.x)
+
+        # Handle object
+        if e.op == idaapi.cot_obj:
+            return e.obj_ea
+
+        print(f'Error: unhandled op')
+        raise StructUtilsException()
+            
+
+        
+
+
+
+
+
+class HexRaysDebug(actions.HexRaysPopupAction):
+
+    description = 'Print current op'
+
+    def __init__(self):
+        super(HexRaysDebug, self).__init__()
+
+    def check(self, hx_view):
+        #print(hx_view.item.citype)
+        if hx_view.item.citype != idaapi.VDI_EXPR:
+            return False
+        return True
+
+    def activate(self, ctx):
+
+        hx_view = idaapi.get_widget_vdui(ctx.widget)
+        print(expr_str(hx_view.item.e.op))
 
 
 actions.action_manager.register(MakeMember())
 actions.action_manager.register(MakeStruct())
 actions.action_manager.register(CommitType())
 actions.action_manager.register(AnalyzeVtable())
+actions.action_manager.register(SetVtable())
+actions.action_manager.register(HexRaysDebug())
+
+
