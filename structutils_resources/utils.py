@@ -774,7 +774,7 @@ def append_member_comment(struct_name, member_offset, text, ignore_duplicate=Tru
 
 class SetVtableComment(actions.HexRaysPopupAction):
 
-    description = 'Set vtable'
+    description = 'Set vtable comment'
 
     def __init__(self):
         super(SetVtableComment, self).__init__()

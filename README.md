@@ -38,3 +38,18 @@ It works any time the memory access is contained within a byte array inside a st
 Right click on on of the arguments of a function call in the Hexrays decompiler view, and select 'Commit type'
 The signature of the function being called will be edited to accept the clicked-on type.
 
+### AnalyzeVtable
+
+Right click on the start of a static vtable (or any static array of functions) in the disassembly view (IDA view), and
+select 'Analyze vtable'. The number of functions is auto detected, and a struct will be created which represents the vtable. 
+The functions will have a first argument of the chosen type (or void pointer), and the names will be auto detected
+via demangling (or simply func_0x... if this fails).
+The new type will be applied to the static vtable.
+
+### SetVtableComment
+
+Right click on an assigment of a global vtable to a struct member is the Hexrays decompiler view, and select 'Set vtable comment'.
+A comment will be appended to the struct member indicating the address of the vtable.
+The address will be calculated correctly, taking into account possible pointer arithmetic (as is often the case where
+the start of the vtable functions is a few bytes after the referenced symbol)
+Also, the IDA view will jump to the address of the vtable, to facilitate use of "AnalyzeVtable" if needed.
