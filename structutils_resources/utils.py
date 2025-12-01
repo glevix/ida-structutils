@@ -749,12 +749,35 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
             ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
             return
 
-class SetVtable(actions.HexRaysPopupAction):
+
+def append_member_comment(struct_name, member_offset, text, ignore_duplicate=True):
+
+    sid = idc.get_struc_id(struct_name)
+    if sid == idaapi.BADADDR:
+        print(f'Failed to get struct id for {struct_name}')
+        return False
+
+    old = idc.get_member_cmt(sid, member_offset)
+
+    if ignore_duplicate:
+        if text in old:
+            return True
+
+    if old:
+        new = '\n'.join([old, text])
+    else:
+        new = text
+
+    idc.set_member_cmt(sid, member_offset, new, 0)
+    return True
+
+
+class SetVtableComment(actions.HexRaysPopupAction):
 
     description = 'Set vtable'
 
     def __init__(self):
-        super(SetVtable, self).__init__()
+        super(SetVtableComment, self).__init__()
 
     def check(self, hx_view):
         # Only makes sense for expressions
@@ -793,11 +816,62 @@ class SetVtable(actions.HexRaysPopupAction):
 
         print(f'Got vtable address: {hex(ea)}')
 
+        try:
+            struct_name, vtable_member_offset = self.resolve_assignment_expression(e.x)
+        except StructUtilsException as e:
+            ida_kernwin.warning(f'Failed to resolve assignment expression')
+            return
+
+        print(f'Got struct {struct_name}, offset {hex(vtable_member_offset)}')
+        
+        if not append_member_comment(struct_name, vtable_member_offset, f'VTABLE: {hex(ea)}'):
+            ida_kernwin.warning(f'Failed to set comment')
+            return
+
+        # Jump to the vtable in IDA view, allowing quick access to AnalyzeVtable
+        ida_kernwin.jumpto(ea)
+
+        print(f'Done')
+
+
+    def resolve_assignment_expression(self, e):
+
+        print(f'Resolving assignment expression: {expr_str(e.op)}')
+
+        # Handle x.m
+        if e.op == idaapi.cot_memref:
+            typeinfo = e.x.type
+            typename = typeinfo.get_type_name()
+            if not typename:
+                print(f'Could not get type name')
+                raise StructUtilsException()
+            if not typeinfo.is_struct():
+                print(f'Type {typename} is not a struct')
+                raise StructUtilsException()
+            return typename, e.m
+
+        # Handle x->m
+        if e.op == idaapi.cot_memptr:
+            typeinfo = e.x.type.get_pointed_object()
+            typename = typeinfo.get_type_name()
+            if not typename:
+                print(f'Could not get type name')
+                raise StructUtilsException()
+            if not typeinfo.is_struct():
+                print(f'Type {typename} is not a struct')
+                raise StructUtilsException()
+            if e.ptrsize != self.ptr_size:
+                print(f'Access size of {e.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
+                raise StructUtilsException()
+            return typename, e.m
+
+        print(f'Error: unhandled op')
+        raise StructUtilsException()
 
 
     def resolve_vtable_expression(self, e):
 
-        print(f'Resolving: {expr_str(e.op)}')
+        print(f'Resolving vtable expression: {expr_str(e.op)}')
 
         # Handle cast
         if e.op == idaapi.cot_cast:
@@ -838,12 +912,6 @@ class SetVtable(actions.HexRaysPopupAction):
         raise StructUtilsException()
             
 
-        
-
-
-
-
-
 class HexRaysDebug(actions.HexRaysPopupAction):
 
     description = 'Print current op'
@@ -867,7 +935,7 @@ actions.action_manager.register(MakeMember())
 actions.action_manager.register(MakeStruct())
 actions.action_manager.register(CommitType())
 actions.action_manager.register(AnalyzeVtable())
-actions.action_manager.register(SetVtable())
+actions.action_manager.register(SetVtableComment())
 actions.action_manager.register(HexRaysDebug())
 
 
