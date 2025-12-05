@@ -19,6 +19,30 @@ LOG.setLevel(logging.DEBUG)
 class StructUtilsException(Exception):
     pass
 
+class ChooseOptionForm(ida_kernwin.Form):
+    def __init__(self, header, message, items):
+        self.items = items
+        super().__init__(
+            f"""STARTITEM 0
+{header}
+<{message}:{{cbCombo}}>""",
+            {
+                'cbCombo': ida_kernwin.Form.DropdownListControl(
+                    items, readonly=True)
+            }
+        )
+
+def ask_options(header, message, options):
+    f = ChooseOptionForm(header, message, options)
+    f.Compile()
+    result = f.Execute()
+    if result == 1:
+        ret = f.cbCombo.value
+    else:
+        ret = None
+    f.Free()
+    return ret
+
 '''
 IDA9 got rid of the ida_struct module, and with it the ida_struct.get_struc function
 '''
@@ -498,7 +522,7 @@ class CommitType(actions.HexRaysPopupAction):
             arg = call
             call = hx_view.cfunc.body.find_parent_of(arg).to_specific_type
             if not call.is_expr():
-                LOG.debugLOG.warning('Aborting: could not find call expression')
+                LOG.warning('Aborting: could not find call expression')
                 return False
 
         if arg.op == idaapi.cot_cast:
@@ -509,20 +533,20 @@ class CommitType(actions.HexRaysPopupAction):
         try:
             index = list(call.a).index(arg)
         except ValueError:
-            LOG.debugLOG.warning('Could not find arg in arg list - make sure you are clicking on a call argument')
+            LOG.warning('Could not find arg in arg list - make sure you are clicking on a call argument')
             return False
-        #LOG.debugLOG.warning(f'Arg type is {typeinfo.dstr()}, index is {index}')
+        #LOG.warning(f'Arg type is {typeinfo.dstr()}, index is {index}')
 
         function = call.x
         if function.op == idaapi.cot_helper:
-            LOG.debugLOG.warning(f'Not a real function (cot_helper) - aborting')
+            LOG.warning(f'Not a real function (cot_helper) - aborting')
             return False
         elif function.op == idaapi.cot_obj:
             self.apply_to_object(function.obj_ea, function.type, index, typeinfo)
             hx_view.refresh_view(True)
             return True
         else:
-            LOG.debugLOG.warning(f'Unsupported function expression type {expr_str(function.op)} - aborting')
+            LOG.warning(f'Unsupported function expression type {expr_str(function.op)} - aborting')
             return False
 
 
@@ -915,7 +939,77 @@ class SetVtableComment(actions.HexRaysPopupAction):
 
         LOG.error(f'unhandled op')
         raise StructUtilsException()
-            
+
+
+class GoToVtable(actions.HexRaysPopupAction):
+
+    description = 'Jump to vtable'
+
+    def __init__(self):
+        super(GoToVtable, self).__init__()
+
+    def check(self, hx_view):
+        
+        #LOG.debug(expr_str(hx_view.item.e.op))
+
+        # Only makes sense for expressions
+        if hx_view.item.citype != idaapi.VDI_EXPR:
+            return False
+
+        # Only makes sense for accessing a member of a struct
+        if hx_view.item.e.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
+            return False
+
+        return True
+
+    def activate(self, ctx):
+
+        hx_view = idaapi.get_widget_vdui(ctx.widget)
+        e = hx_view.item.e
+
+        if e.op == idaapi.cot_memptr:
+            typeinfo = e.x.type.get_pointed_object()
+        elif e.op == idaapi.cot_memref:
+            typeinfo = e.x.type
+        else:
+            logging.error(f'e.op is not memptr or memref')
+            return
+
+        typename = typeinfo.get_type_name()
+        offset = e.m
+
+        sid = idc.get_struc_id(typename)
+        if sid == idaapi.BADADDR:
+            LOG.error(f'Failed to get struct id for {typename}')
+            return False
+
+        comment = idc.get_member_cmt(sid, offset)
+        vtables = []
+        for c in comment.splitlines():
+            if c.startswith("VTABLE: 0x"):
+                _, _, addr_str = c.partition(':')
+                vtables.append(int(addr_str, 16))
+
+        LOG.debug(f'Found vtables: {[hex(v) for v in vtables]}')
+
+        if not vtables:
+            ida_kernwin.warning(f'No vtables registered for struct {typename} offset {hex(offset)}')
+
+        if len(vtables) == 1:
+            ida_kernwin.jumpto(vtables[0])
+            return
+
+        idx = ask_options(f'Select vtable',f'Multiple vtables registered, please choose', [hex(v) for v in vtables])
+        if idx is None:
+            LOG.warning(f'Invalid choice')
+            return
+        ida_kernwin.jumpto(vtables[idx])
+
+
+
+
+
+        
 
 class HexRaysDebug(actions.HexRaysPopupAction):
 
@@ -947,9 +1041,13 @@ class HexRaysDebug(actions.HexRaysPopupAction):
 
 actions.action_manager.register(MakeMember())
 actions.action_manager.register(MakeStruct())
+
 actions.action_manager.register(CommitType())
+
 actions.action_manager.register(AnalyzeVtable())
 actions.action_manager.register(SetVtableComment())
+actions.action_manager.register(GoToVtable())
+
 actions.action_manager.register(HexRaysDebug())
 
 
