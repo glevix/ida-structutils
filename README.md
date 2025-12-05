@@ -14,7 +14,8 @@ Passing --uninstall will delete them
 
 ## Use
 
-Currently all plugins are to be used from the Hexrays decompiler view
+Utils are to be used from the Disassembly view (AnalyzeVtable), or the Pseudocode view (all others).
+All are accessible from the context menus in the view, and some have hotkeys (MakeMember).
 
 ### MakeStruct
 
@@ -53,3 +54,9 @@ A comment will be appended to the struct member indicating the address of the vt
 The address will be calculated correctly, taking into account possible pointer arithmetic (as is often the case where
 the start of the vtable functions is a few bytes after the referenced symbol).
 Also, the IDA view will jump to the address of the vtable, to facilitate use of "AnalyzeVtable" if needed.
+
+### JumpToVtable
+
+Right click on a struct vtable member (previously set with SetVtableComment), and select "Jumpt to vtable". The IDA disassembly view
+will jump to the address of the vtable.
+If multiple vtable commented have been set for the memeber, you will be provided with a dropdown menu to choose from.

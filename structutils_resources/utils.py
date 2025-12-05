@@ -941,12 +941,12 @@ class SetVtableComment(actions.HexRaysPopupAction):
         raise StructUtilsException()
 
 
-class GoToVtable(actions.HexRaysPopupAction):
+class JumpToVtable(actions.HexRaysPopupAction):
 
     description = 'Jump to vtable'
 
     def __init__(self):
-        super(GoToVtable, self).__init__()
+        super(JumpToVtable, self).__init__()
 
     def check(self, hx_view):
         
@@ -1046,7 +1046,7 @@ actions.action_manager.register(CommitType())
 
 actions.action_manager.register(AnalyzeVtable())
 actions.action_manager.register(SetVtableComment())
-actions.action_manager.register(GoToVtable())
+actions.action_manager.register(JumpToVtable())
 
 actions.action_manager.register(HexRaysDebug())
 
