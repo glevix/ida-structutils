@@ -10,6 +10,11 @@ import ida_xref
 import idc
 import idautils
 from . import actions
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
+LOG = logging.getLogger('STRUCTUTILS')
+LOG.setLevel(logging.DEBUG)
 
 class StructUtilsException(Exception):
     pass
@@ -34,7 +39,7 @@ def get_member_details(struct_id, offset):
             if moffset == offset:
                 return name, size
     else:
-        print(f"No members found in structure with id '{struct_id}'")
+        LOG.warning(f"No members found in structure with id '{struct_id}'")
 
 '''
 Helper function for introducing a new member into a struct, inside an array of bytes.
@@ -42,24 +47,24 @@ The new member will be created at the specified offset in the array, thereby spl
 '''
 def make_member_from_array(struct_name, array_offset, offset_in_array, member_size, member_name=None):
 
-    print(f'make_member_from_array({struct_name}, {array_offset}, {offset_in_array}, {member_size}, {member_name})')
+    LOG.debug(f'make_member_from_array({struct_name}, {array_offset}, {offset_in_array}, {member_size}, {member_name})')
 
     if member_size not in TYPES:
-        print(f'Illegal member size {member_size}')
+        LOG.error(f'Illegal member size {member_size}')
         return False
     if offset_in_array < 0:
-        print(f'Illegal offset {offset_in_array}')
+        LOG.error(f'Illegal offset {offset_in_array}')
         return False
 
     struct_id = idc.get_struc_id(struct_name)
     tid = ida_typeinf.get_named_type_tid(struct_name)
 
     if tid != struct_id:
-        print('Struct id and tid dont match')
+        LOG.error('Struct id and tid dont match')
         return False
     
     if struct_id == idaapi.BADADDR:
-        print(f'Could not get struct id for {struct_name}')
+        LOG.error(f'Could not get struct id for {struct_name}')
         return False
 
     struct = get_struc(struct_id)
@@ -68,12 +73,12 @@ def make_member_from_array(struct_name, array_offset, offset_in_array, member_si
     _, array_size = get_member_details(struct_id, array_offset)
 
     if array_size <= 0:
-        print(f'Bad array size: {array_size}')
+        LOG.error(f'Bad array size: {array_size}')
         return False
 
     top = array_size - (offset_in_array + member_size)
     if top < 0:
-        print(f'Size would overrun array')
+        LOG.error(f'Size would overrun array')
         return False
 
     if not member_name:
@@ -97,21 +102,21 @@ def make_member_from_array(struct_name, array_offset, offset_in_array, member_si
     # Add the new member
     error = idc.add_struc_member(struct_id, member_name, array_offset + offset_in_array, (TYPES[member_size]|idaapi.FF_DATA )&0xFFFFFFFF, -1, member_size)
     if error:
-        print(f'Error {error} adding new member')
+        LOG.error(f'Error {error} adding new member')
         return False
 
     if offset_in_array:
         # Add gap array below
         error = idc.add_struc_member(struct_id, f'field_{array_offset:02X}', array_offset, (TYPES[1]|idaapi.FF_DATA )&0xFFFFFFFF, -1, offset_in_array)
         if error:
-            print(f'Error {error} adding gap array below new member')
+            LOG.error(f'Error {error} adding gap array below new member')
             return False
 
     if top:
         # Add gap array above
         error = idc.add_struc_member(struct_id, f'field_{array_offset + offset_in_array + member_size:02X}', array_offset + offset_in_array + member_size, (TYPES[1]|idaapi.FF_DATA )&0xFFFFFFFF, -1, top)
         if error:
-            print(f'Error {error} adding gap array above new member')
+            LOG.error(f'Error {error} adding gap array above new member')
             return False
 
     return True
@@ -160,29 +165,29 @@ class MakeStruct(actions.HexRaysPopupAction):
         if tid != idaapi.BADADDR:
             tif = ida_typeinf.tinfo_t()
             if not tif.get_type_by_tid(tid):
-                print(f'"{name}" has a tid but no type - bug in IDA?')
+                LOG.warning(f'"{name}" has a tid but no type - bug in IDA?')
                 return False
             if tif.present():
-                print(f'"{name}" already exists')
+                LOG.warning(f'"{name}" already exists')
                 return False
             else:
-                print(f'"{name}" already exists as a non-present type, populating')
+                LOG.info(f'"{name}" already exists as a non-present type, populating')
                 if ida_typeinf.idc_parse_types(f'struct {name}{{}};', 0):
-                    print(f'Failed')
+                    LOG.warning(f'Failed')
                     return False
-                print(f'Populated struct type "{name}"')
+                LOG.debug(f'Populated struct type "{name}"')
         else:
             tid = idc.add_struc(idaapi.BADADDR, name, False)
             struct = get_struc(tid)
             if not struct:
-                print("Failed")
+                LOG.warning("Failed")
                 return False
-            print(f'Created new struct type "{name}"')
+            LOG.debug(f'Created new struct type "{name}"')
 
 
         error = idc.add_struc_member(tid, "field_0", 0, (TYPES[1]|idaapi.FF_DATA )&0xFFFFFFFF, -1, size)
         if error:
-            print(f'Error {error} adding new member')
+            LOG.warning(f'Error {error} adding new member')
             return False
 
         return True
@@ -223,10 +228,13 @@ class MakeMember(actions.HexRaysPopupAction):
         #print(f'First OP: {hx_view.item.e.op}')
 
         if hx_view.item.e.op == idaapi.cot_num:
-            return self.from_array_index(hx_view, hx_view.item.e)
+            result = self.from_array_index(hx_view, hx_view.item.e)
         else:
             # cot_memptr or cot_memref
-            return self.from_member(hx_view, hx_view.item.e)
+            result = self.from_member(hx_view, hx_view.item.e)
+
+        if not result:
+            ida_kernwin.warning(f'Failed to make member')
 
     def from_member(self, hx_view, indexee_expression):
 
@@ -235,18 +243,18 @@ class MakeMember(actions.HexRaysPopupAction):
         # example (the 'field_3D' is clicked, and is an array of bytes): *(_QWORD *)tcb->field_3D0 = 0i64;
 
         next_expression = hx_view.cfunc.body.find_parent_of(indexee_expression).to_specific_type
-        #print(f'Parent: {next_expression.op}')
+        #LOG.debug(f'Parent: {next_expression.op}')
         if next_expression.op == idaapi.cot_idx:
             return self.from_array_index(hx_view, next_expression.y)
         elif next_expression.op != idaapi.cot_cast:
-            print(f'Aborting: parent of memref/memptr expression is not idx or cast')
+            LOG.warning(f'Aborting: parent of memref/memptr expression is not idx or cast')
             return False
         casting_expression = next_expression
 
         # This is the item representing the deref (*)
         ptr_expression = hx_view.cfunc.body.find_parent_of(casting_expression).to_specific_type
         if ptr_expression.op != idaapi.cot_ptr:
-            print(f'Aborting: casting expression is not inside a ptr expression ({ptr_expression.op})')
+            LOG.warning(f'Aborting: casting expression is not inside a ptr expression ({ptr_expression.op})')
             return False
 
         if indexee_expression.op == idaapi.cot_memptr:
@@ -266,7 +274,7 @@ class MakeMember(actions.HexRaysPopupAction):
             hx_view.refresh_view(True)
             return True
         else:
-            print(f'Failed')  
+            LOG.warning(f'Failed')  
             return False
 
     def from_array_index(self, hx_view, array_offset_expression):
@@ -277,7 +285,7 @@ class MakeMember(actions.HexRaysPopupAction):
         # This is the item representing the square brackets
         indexing_expression = hx_view.cfunc.body.find_parent_of(array_offset_expression).to_specific_type # ida_hexrays.cexpr_t
         if indexing_expression.op != idaapi.cot_idx:
-            print(f'Aborting: num expression is not inside an indexing expression ({indexing_expression.op})')
+            LOG.warning(f'Aborting: num expression is not inside an indexing expression ({indexing_expression.op})')
             return False
 
         # This is the object being indexed by the square brackets
@@ -287,7 +295,7 @@ class MakeMember(actions.HexRaysPopupAction):
         elif indexee_expression.op == idaapi.cot_memref:
             typeinfo = indexee_expression.x.type
         else:
-            print(f'Aborting: indexee expression is not a memref or memptr ({indexee_expression.op})')
+            LOG.warning(f'Aborting: indexee expression is not a memref or memptr ({indexee_expression.op})')
             return False
 
         # Now look for the "*(cast)&" sequence. TODO handle the case where there isnt one
@@ -301,41 +309,41 @@ class MakeMember(actions.HexRaysPopupAction):
             # This is the item representing the cast
             casting_expression = hx_view.cfunc.body.find_parent_of(referencing_expression).to_specific_type
             if casting_expression.op != idaapi.cot_cast:
-                print(f'Aborting: referencing expression is not inside a casting expression ({casting_expression.op})')
+                LOG.warning(f'Aborting: referencing expression is not inside a casting expression ({casting_expression.op})')
                 return False
 
             next_expression = hx_view.cfunc.body.find_parent_of(casting_expression).to_specific_type
             if next_expression.op == idaapi.cot_ptr:
                 member_size = next_expression.ptrsize
             elif next_expression.op == idaapi.cot_call:
-                print(f'Aborting: Memory reference passed to function, no way to guess size')
+                LOG.warning(f'Aborting: Memory reference passed to function, no way to guess size')
                 return False
                 # TODO: if the cast type is a pointer, we can infer the size, but this would still be risky
                 # We could also just set the size to 1, so that the offset can be given a meaningful name
                 # until the type can be inferred.
                 #member_size = casting_expression.type.get_size()
             else:
-                print(f'Aborting: casting expression is not inside a ptr or call expression ({next_expression.op})')
+                LOG.warning(f'Aborting: casting expression is not inside a ptr or call expression ({next_expression.op})')
                 return False
         elif idaapi.is_assignment(next_expression.op) or next_expression.op in finals:
             # The array element is being accessed directly - get the size from the array type
             member_type = indexee_expression.type.get_array_element()
             member_size = member_type.get_size()
         else:
-            print(f'Aborting. Parent of indexing expression is not reference or assignment ({next_expression.op})')
+            LOG.warning(f'Aborting. Parent of indexing expression is not reference or assignment ({next_expression.op})')
             return False
 
         # We now have all the items we need. Start making the calculations
 
-        #print(f'Access size is {member_size}')
+        #LOG.debug(f'Access size is {member_size}')
 
         # Get the offset within the array
         offset_in_array = array_offset_expression.numval()
-        #print(f'Offset in array is {offset_in_array}')
+        #LOG.debug(f'Offset in array is {offset_in_array}')
 
         # Get the offset of the array itself
         array_offset = indexee_expression.m
-        #print(f'Array offset is {hex(array_offset)}')
+        #LOG.debug(f'Array offset is {hex(array_offset)}')
 
         struct_name = typeinfo.dstr()
 
@@ -343,7 +351,7 @@ class MakeMember(actions.HexRaysPopupAction):
             hx_view.refresh_view(True)
             return True
         else:
-            print(f'Failed')
+            LOG.warning(f'Failed')
             return False
 
 EXPR_TYPES = {
@@ -490,7 +498,7 @@ class CommitType(actions.HexRaysPopupAction):
             arg = call
             call = hx_view.cfunc.body.find_parent_of(arg).to_specific_type
             if not call.is_expr():
-                print('Aborting: could not find call expression')
+                LOG.debugLOG.warning('Aborting: could not find call expression')
                 return False
 
         if arg.op == idaapi.cot_cast:
@@ -501,20 +509,20 @@ class CommitType(actions.HexRaysPopupAction):
         try:
             index = list(call.a).index(arg)
         except ValueError:
-            print('Could not find arg in arg list - make sure you are clicking on a call argument')
+            LOG.debugLOG.warning('Could not find arg in arg list - make sure you are clicking on a call argument')
             return False
-        #print(f'Arg type is {typeinfo.dstr()}, index is {index}')
+        #LOG.debugLOG.warning(f'Arg type is {typeinfo.dstr()}, index is {index}')
 
         function = call.x
         if function.op == idaapi.cot_helper:
-            print(f'Not a real function (cot_helper) - aborting')
+            LOG.debugLOG.warning(f'Not a real function (cot_helper) - aborting')
             return False
         elif function.op == idaapi.cot_obj:
             self.apply_to_object(function.obj_ea, function.type, index, typeinfo)
             hx_view.refresh_view(True)
             return True
         else:
-            print(f'Unsupported function expression type {expr_str(function.op)} - aborting')
+            LOG.debugLOG.warning(f'Unsupported function expression type {expr_str(function.op)} - aborting')
             return False
 
 
@@ -591,11 +599,11 @@ def get_vtable_size(ea):
     (prev_name_ea, prev_name), (next_name_ea, next_name) = get_nearest_symbols(ea)
 
     if name:
-        print(f'Address {hex(ea)} has symbol {name}')
+        LOG.debug(f'Address {hex(ea)} has symbol {name}')
     else:
-        print(f'Address {hex(ea)} has no symbol')
-    print(f'Previous symbol is at {hex(prev_name_ea)}: {prev_name} (distance: {hex(ea-prev_name_ea)})')
-    print(f'Next symbol is at {hex(next_name_ea)}: {next_name} (distance: {hex(next_name_ea-ea)})')
+        LOG.debug(f'Address {hex(ea)} has no symbol')
+    LOG.debug(f'Previous symbol is at {hex(prev_name_ea)}: {prev_name} (distance: {hex(ea-prev_name_ea)})')
+    LOG.debug(f'Next symbol is at {hex(next_name_ea)}: {next_name} (distance: {hex(next_name_ea-ea)})')
 
     ptr_size = 8 if ida_ida.inf_is_64bit() else 4
 
@@ -608,22 +616,22 @@ def get_vtable_size(ea):
     stop = False
     while True:
 
-        print(f'Checking {hex(endea)}')
+        LOG.debug(f'Checking {hex(endea)}')
 
         # Reached next symbol?
         if endea == next_name_ea:
-            print(f'reached symbol')
+            LOG.debug(f'reached symbol')
             stop = True
 
         # Reached xref (ignore the possible xref to the vtable itself)?
         if endea != ea:
             if has_xrefs_to(endea):
-                print(f'reached xref')
+                LOG.debug(f'reached xref')
                 stop = True
 
         # Reached a non-code pointer?
         if not ptr_points_to_code(endea):
-            print(f'reached non code pointer')
+            LOG.debug(f'reached non code pointer')
             stop = True
 
         if stop:
@@ -631,15 +639,15 @@ def get_vtable_size(ea):
         endea += ptr_size
 
     count = (endea-ea)//ptr_size
-    print(f'vtable ends at {hex(endea)}')
-    print(f'vtable contains {count} functions')
+    LOG.debug(f'vtable ends at {hex(endea)}')
+    LOG.debug(f'vtable contains {count} functions')
 
     return count
 
 
 def create_vtable_entry(ea, offset, this_type='void', entries=None):
 
-    print(f'Creating entry for offset {hex(offset)}')
+    LOG.debug(f'Creating entry for offset {hex(offset)}')
 
     ptr_size = 8 if ida_ida.inf_is_64bit() else 4
     default = f'int (*func_{hex(offset)})({this_type});'
@@ -651,25 +659,25 @@ def create_vtable_entry(ea, offset, this_type='void', entries=None):
         func_ea = ida_bytes.get_dword(ea+offset)
 
     if not func_ea:
-        print(f'No function')
+        LOG.debug(f'No function')
         return default
 
     func_name = idaapi.get_ea_name(func_ea, idaapi.GN_SHORT|idaapi.GN_DEMANGLED)
     if not func_name:
-        print(f'No function name')
+        LOG.debug(f'No function name')
         return default
 
     delim = func_name.find("(")
     if delim != -1:
         func_name = func_name[:delim]
     else:
-        print(f'No parentheses')
+        LOG.debug(f'No parentheses')
         return default
 
     if '::' in func_name:
         func_name =  func_name.split('::')[-1].strip()
     else:
-        print(f'No scope delimiter')
+        LOG.debug(f'No scope delimiter')
         return default
 
     if '~' in func_name:
@@ -681,7 +689,7 @@ def create_vtable_entry(ea, offset, this_type='void', entries=None):
         suffix = '' if entries[func_name] == 1 else f'_{hex(offset)}'
         return f'int (*{func_name}{suffix})({this_type});'
 
-    print(f'No name')
+    LOG.debug(f'No name')
     return default
 
 
@@ -699,7 +707,7 @@ def apply_struct(ea, struct_name):
 
     tif = ida_typeinf.tinfo_t()
     if not tif.get_named_type(struct_name):
-        print(f'Unable to retrieve {struct_name} structure')
+        LOG.warning(f'Unable to retrieve {struct_name} structure')
         return False
 
     # apply the type to EA
@@ -718,7 +726,7 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
 
     def activate(self, ctx):
         ea = ctx.cur_ea
-        print(f'Analyzing vtable at {hex(ea)}')
+        LOG.debug(f'Analyzing vtable at {hex(ea)}')
         count = get_vtable_size(ea)
         if not count:
             ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
@@ -740,10 +748,10 @@ class AnalyzeVtable(actions.IdaViewPopupAction):
         
         if ida_typeinf.idc_parse_types(struct_def, 0):
             ida_kernwin.warning(f'Could not parse struct definition')
-            print(struct_def)
+            LOG.debug(struct_def)
             return
 
-        print(f'Created new struct type {name}')
+        LOG.info(f'Created new struct type {name}')
 
         if not apply_struct(ea, name):
             ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
@@ -754,7 +762,7 @@ def append_member_comment(struct_name, member_offset, text, ignore_duplicate=Tru
 
     sid = idc.get_struc_id(struct_name)
     if sid == idaapi.BADADDR:
-        print(f'Failed to get struct id for {struct_name}')
+        LOG.error(f'Failed to get struct id for {struct_name}')
         return False
 
     old = idc.get_member_cmt(sid, member_offset)
@@ -793,7 +801,7 @@ class SetVtableComment(actions.HexRaysPopupAction):
         # We need to propagate until we find the assignment op
         e = hx_view.item.e
         while e:
-            print(expr_str(e.op))
+            LOG.debug(expr_str(e.op))
             if e.op == idaapi.cot_asg:
                 break
             if e.op == idaapi.cit_expr:
@@ -814,7 +822,7 @@ class SetVtableComment(actions.HexRaysPopupAction):
             ida_kernwin.warning(f'Failed to resolve vtable expression')
             return
 
-        print(f'Got vtable address: {hex(ea)}')
+        LOG.debug(f'Got vtable address: {hex(ea)}')
 
         try:
             struct_name, vtable_member_offset = self.resolve_assignment_expression(e.x)
@@ -822,7 +830,7 @@ class SetVtableComment(actions.HexRaysPopupAction):
             ida_kernwin.warning(f'Failed to resolve assignment expression')
             return
 
-        print(f'Got struct {struct_name}, offset {hex(vtable_member_offset)}')
+        LOG.debug(f'Got struct {struct_name}, offset {hex(vtable_member_offset)}')
         
         if not append_member_comment(struct_name, vtable_member_offset, f'VTABLE: {hex(ea)}'):
             ida_kernwin.warning(f'Failed to set comment')
@@ -831,22 +839,19 @@ class SetVtableComment(actions.HexRaysPopupAction):
         # Jump to the vtable in IDA view, allowing quick access to AnalyzeVtable
         ida_kernwin.jumpto(ea)
 
-        print(f'Done')
-
-
     def resolve_assignment_expression(self, e):
 
-        print(f'Resolving assignment expression: {expr_str(e.op)}')
+        LOG.debug(f'Resolving assignment expression: {expr_str(e.op)}')
 
         # Handle x.m
         if e.op == idaapi.cot_memref:
             typeinfo = e.x.type
             typename = typeinfo.get_type_name()
             if not typename:
-                print(f'Could not get type name')
+                LOG.error(f'Could not get type name')
                 raise StructUtilsException()
             if not typeinfo.is_struct():
-                print(f'Type {typename} is not a struct')
+                LOG.error(f'Type {typename} is not a struct')
                 raise StructUtilsException()
             return typename, e.m
 
@@ -855,29 +860,29 @@ class SetVtableComment(actions.HexRaysPopupAction):
             typeinfo = e.x.type.get_pointed_object()
             typename = typeinfo.get_type_name()
             if not typename:
-                print(f'Could not get type name')
+                LOG.error(f'Could not get type name')
                 raise StructUtilsException()
             if not typeinfo.is_struct():
-                print(f'Type {typename} is not a struct')
+                LOG.error(f'Type {typename} is not a struct')
                 raise StructUtilsException()
             if e.ptrsize != self.ptr_size:
-                print(f'Access size of {e.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
+                LOG.error(f'Access size of {e.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
                 raise StructUtilsException()
             return typename, e.m
 
-        print(f'Error: unhandled op')
+        LOG.error(f'unhandled op')
         raise StructUtilsException()
 
 
     def resolve_vtable_expression(self, e):
 
-        print(f'Resolving vtable expression: {expr_str(e.op)}')
+        LOG.debug(f'Resolving vtable expression: {expr_str(e.op)}')
 
         # Handle cast
         if e.op == idaapi.cot_cast:
             # Validate cast to pointer size... should we really bother?
             if e.type.get_size() != self.ptr_size:
-                print(f'Error: Cast size of {e.type.get_size()} differs from pointer size of {self.ptr_size}')
+                LOG.error(f'Cast size of {e.type.get_size()} differs from pointer size of {self.ptr_size}')
                 raise StructUtilsException()
             return self.resolve_vtable_expression(e.x)
 
@@ -900,7 +905,7 @@ class SetVtableComment(actions.HexRaysPopupAction):
         # Handle reference
         if e.op == idaapi.cot_ref:
             if e.x.op != idaapi.cot_obj:
-                print(f'Error: Reference to non-obj expression: {expr_str(e.x.op)}')
+                LOG.error(f'Reference to non-obj expression: {expr_str(e.x.op)}')
                 raise StructUtilsException()
             return self.resolve_vtable_expression(e.x)
 
@@ -908,7 +913,7 @@ class SetVtableComment(actions.HexRaysPopupAction):
         if e.op == idaapi.cot_obj:
             return e.obj_ea
 
-        print(f'Error: unhandled op')
+        LOG.error(f'unhandled op')
         raise StructUtilsException()
             
 
@@ -920,15 +925,24 @@ class HexRaysDebug(actions.HexRaysPopupAction):
         super(HexRaysDebug, self).__init__()
 
     def check(self, hx_view):
-        #print(hx_view.item.citype)
-        if hx_view.item.citype != idaapi.VDI_EXPR:
-            return False
         return True
 
     def activate(self, ctx):
 
         hx_view = idaapi.get_widget_vdui(ctx.widget)
-        print(expr_str(hx_view.item.e.op))
+        citype = hx_view.item.citype
+        if citype == idaapi.VDI_EXPR:
+            LOG.info(f'VDI_EXPR: {expr_str(hx_view.item.e.op)}')
+        elif citype == idaapi.VDI_FUNC:
+            LOG.info(f'VDI_FUNC')
+        elif citype == idaapi.VDI_LVAR:
+            LOG.info(f'VDI_LVAR')
+        elif citype == idaapi.VDI_NONE:
+            LOG.info(f'VDI_NONE')
+        elif citype == idaapi.VDI_TAIL:
+            LOG.info(f'VDI_TAIL')
+        else:
+            LOG.info(f'Unknown citype: {citype}')
 
 
 actions.action_manager.register(MakeMember())
