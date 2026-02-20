@@ -58,7 +58,8 @@ class ActionManager(object):
                     #      ...
                     #
                     if ida_kernwin.get_widget_type(widget) == ida_kernwin.BWN_DISASM:
-                        ida_kernwin.attach_action_to_popup(widget, popup, action.name, None)
+                        if not ida_kernwin.attach_action_to_popup(widget, popup, action.name, 'StructUtils/submenu', ida_kernwin.SETMENU_APP):
+                            print(f'Failed to attach action to popup')
             hooks = Hooks()
             hooks.hook()
             self.__hooks.append(hooks)
@@ -88,7 +89,7 @@ class Action(idaapi.action_handler_t):
 
     @property
     def name(self):
-        return "HexRaysPyTools:" + type(self).__name__
+        return "structutils:" + type(self).__name__
 
     def activate(self, ctx):
         # type: (idaapi.action_activation_ctx_t) -> None
@@ -136,7 +137,7 @@ class HexRaysPopupRequestHandler(HexRaysEventHandler):
     def handle(self, event, *args):
         form, popup, hx_view = args
         if self.__action.check(hx_view):
-            idaapi.attach_action_to_popup(form, popup, self.__action.name, None)
+            idaapi.attach_action_to_popup(form, popup, self.__action.name, 'StructUtils/submenu', ida_kernwin.SETMENU_APP)
         return 0
 
 class IdaViewPopupAction(Action):
