@@ -1019,7 +1019,7 @@ class JumpToVtable(actions.HexRaysPopupAction):
                 vtables.append((addr, sym, typename))
 
         if not vtables:
-            ida_kernwin.warning(f'No vtables registered for struct {typename} offset {hex(offset)}')
+            ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(offset)}')
             return
 
         options = []
