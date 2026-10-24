@@ -924,6 +924,33 @@ def append_member_comment(struct_name, member_offset, text, ignore_duplicate=Tru
     return True
 
 
+def rename_vtable_member_if_default(struct_name, member_offset):
+    """
+    Rename a member to '__vtable' (or '__vtable_<offset>' if the offset isn't 0), but only if
+    its current name still looks like an auto-generated default (e.g. 'field_18', as produced by
+    make_member_from_array/MakeStruct) rather than a name the user already gave it on purpose.
+    Returns True if renamed, False if left alone (already named, not found, or rename failed).
+    """
+    sid = idc.get_struc_id(struct_name)
+    if sid == idaapi.BADADDR:
+        LOG.error(f'Failed to get struct id for {struct_name}')
+        return False
+
+    current_name, _ = get_member_details(sid, member_offset) or (None, None)
+    default_names = (f'field_{member_offset:02X}', f'field_{member_offset}')
+    if current_name not in default_names:
+        LOG.debug(f'Member at offset {hex(member_offset)} in {struct_name} is already named '
+                  f'"{current_name}", leaving it alone')
+        return False
+
+    member_name = '__vtable' if member_offset == 0 else f'__vtable_{member_offset:02X}'
+    if not idc.set_member_name(sid, member_offset, member_name):
+        LOG.warning(f'Failed to rename member at offset {hex(member_offset)} in {struct_name} to {member_name}')
+        return False
+
+    return True
+
+
 class SetVtable(actions.HexRaysPopupAction):
 
     description = 'Set vtable'
@@ -984,6 +1011,9 @@ class SetVtable(actions.HexRaysPopupAction):
             ida_kernwin.warning(f'Failed to set comment')
             return
 
+        if rename_vtable_member_if_default(struct_name, vtable_member_offset):
+            hx_view.refresh_view(True)
+
         # Jump to the vtable in IDA view, allowing quick access to AnalyzeVtable
         ida_kernwin.jumpto(ea)
 
@@ -996,12 +1026,6 @@ class SetVtable(actions.HexRaysPopupAction):
 
         if not set_member_type_to_pointer(struct_name, vtable_member_offset, vtable_struct_name):
             ida_kernwin.warning(f'Failed to set member type to {vtable_struct_name} *')
-            return
-
-        sid = idc.get_struc_id(struct_name)
-        member_name = '__vtable' if vtable_member_offset == 0 else f'__vtable_{vtable_member_offset:02X}'
-        if not idc.set_member_name(sid, vtable_member_offset, member_name):
-            ida_kernwin.warning(f'Failed to rename member to {member_name}')
             return
 
         hx_view.refresh_view(True)

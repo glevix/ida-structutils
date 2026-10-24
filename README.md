@@ -68,12 +68,13 @@ sized member, the action fails with a clear error instead of silently misinterpr
 A comment will be appended to the struct member indicating the address of the vtable.
 The address will be calculated correctly, taking into account possible pointer arithmetic (as is often the case where
 the start of the vtable functions is a few bytes after the referenced symbol).
+If the member's current name still looks like an auto-generated default (e.g. `field_18`, whether
+from a prior carve or from MakeStruct), it's renamed to `__vtable` (or `__vtable_<offset>` if its
+offset within the struct isn't 0); a name you already gave it on purpose is left alone.
 Also, the IDA view will jump to the address of the vtable, to facilitate use of "AnalyzeVtable" if needed.
 You will then be asked whether to analyze the vtable right away (same as running "AnalyzeVtable" at
 that address). If you do, and it succeeds, the struct member's type is set to a pointer to the newly
-created vtable struct, and the member is renamed to `__vtable` (or `__vtable_<offset>` if its offset
-within the struct isn't 0). The Hexrays view is refreshed so the new type and name are visible
-immediately.
+created vtable struct. The Hexrays view is refreshed so any new type/name is visible immediately.
 
 ### JumpToVtable
 
