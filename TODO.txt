@@ -1,0 +1,31 @@
+List of opens issues and planned features
+
+1. Itanium support
+	When available, use the offset-to-top and typeinfo pointers to better handle the vtable
+
+4. In 'set vtable comment', after completion, ask if user would also like to perform the analysis.
+	If so, then subsequently set the member type to the vtable pointer, and set the field name
+	to __vtable (__vtable_<field_offset> if not 0)
+
+5. In 'analyze vtable', make the initial dialog box ask for both the vtable struct name, and the type of
+	'this', and the name for the vtable symbol. It should provide defaults for all of these, of the
+	following format:
+		struct name: vtable_<class>
+		type of this: <class> *
+		symbol: <class>::__vtable
+	The 'class' should be determined by a preceding dialog box that asks for the class name (optional).
+	If not provided, the class name should be class_<vtable address>
+
+DONE
+
+2. In pseudocode, allow jumping directly to virtual function implementation when called via
+	a vtable (choose from popup list similar to 'jump to vtable'), instead of the current
+	workflow of jumping to the vtable and then manually double-clicking the correct function.
+	This should be a new action named 'jump to implementation'
+	Done - added JumpToImplementation: reads the VTABLE comment(s) on the vtable pointer
+	member, adds the called slot's offset, dereferences, and jumps to the resulting
+	function (with a chooser if multiple vtables are registered).
+
+3. In 'create struct', allow manually editing the size in the initial dialog box
+	Done - MakeStruct now shows a form with both name and size fields, size defaulting
+	to the clicked-on number but editable.

@@ -156,11 +156,36 @@ TYPES = {
     16: idaapi.FF_OWORD,
     }
 
+class MakeStructForm(ida_kernwin.Form):
+    def __init__(self, default_size):
+        super().__init__(
+            """STARTITEM 0
+New struct
+<Struct name:{name}>
+<Size (bytes):{size}>
+""",
+            {
+                'name': ida_kernwin.Form.StringInput(),
+                'size': ida_kernwin.Form.NumericInput(tp=ida_kernwin.Form.FT_DEC, value=default_size),
+            }
+        )
+
+def ask_struct_info(default_size):
+    f = MakeStructForm(default_size)
+    f.Compile()
+    result = f.Execute()
+    if result == 1:
+        ret = (f.name.value, f.size.value)
+    else:
+        ret = (None, None)
+    f.Free()
+    return ret
+
 '''
 Provides a 'Make struct' option in the dissasembly context right-click dropdown list,
 whenever the cursor is on a number.
-Once clicked, a popup will request the new struct name, and a new struct will be created
-with the size of the number
+Once clicked, a popup will request the new struct name and size (defaulting to the size
+of the clicked number, but editable), and a new struct will be created with that size.
 '''
 class MakeStruct(actions.HexRaysPopupAction):
 
@@ -182,8 +207,15 @@ class MakeStruct(actions.HexRaysPopupAction):
     def activate(self, ctx):
 
         hx_view = idaapi.get_widget_vdui(ctx.widget)
-        size = hx_view.item.e.numval()
-        name = ida_kernwin.ask_str("", 0, "New struct name:")
+        detected_size = hx_view.item.e.numval()
+        name, size = ask_struct_info(detected_size)
+
+        if not name:
+            return False
+
+        if not size or size <= 0:
+            LOG.warning(f'Illegal size {size}')
+            return False
 
         tid = ida_typeinf.get_named_type_tid(name)
         if tid != idaapi.BADADDR:
@@ -1041,6 +1073,144 @@ class JumpToVtable(actions.HexRaysPopupAction):
         ida_kernwin.jumpto(vtables[idx][0])
 
 
+class ImplementationChooser(ida_kernwin.Choose):
+    def __init__(self, items):
+        # items should be a list of lists: [[col1, col2, col3, col4, col5], ...]
+        super().__init__(
+            "Select an implementation",
+            [
+                ["Vtable type", 30],
+                ["Vtable symbol", 30],
+                ["Vtable address", 16],
+                ["Function symbol", 30],
+                ["Function address", 16],
+            ],
+            flags=ida_kernwin.Choose.CH_MODAL
+        )
+        self.items = items
+
+    def OnGetSize(self):
+        return len(self.items)
+
+    def OnGetLine(self, n):
+        return self.items[n]
+
+
+class JumpToImplementation(actions.HexRaysPopupAction):
+    """
+    Provides a 'Jump to implementation' option when right-clicking a vtable slot access
+    (e.g. the 'Func_18' in 'tcb->field_vtable->Func_18(tcb)'), where 'field_vtable' is a
+    member previously tagged by SetVtableComment. Instead of jumping to the vtable itself
+    (JumpToVtable) and then manually locating the right function, this resolves the actual
+    function address(es) directly: for each vtable address found in field_vtable's VTABLE:
+    comment(s), it adds the clicked slot's offset and dereferences, then jumps straight to
+    the implementation (or offers a choice if multiple vtables are registered).
+    """
+
+    description = 'Jump to implementation'
+    hotkey = 'Ctrl-J'
+
+    def __init__(self):
+        super(JumpToImplementation, self).__init__()
+
+    def check(self, hx_view):
+
+        # Only makes sense for expressions
+        if hx_view.item.citype != idaapi.VDI_EXPR:
+            return False
+
+        e = hx_view.item.e
+
+        # Must be a member access (the vtable slot being called)...
+        if e.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
+            return False
+
+        # ...of another member access (the vtable pointer member, tagged by SetVtableComment)
+        if e.x.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
+            return False
+
+        return True
+
+    def activate(self, ctx):
+
+        hx_view = idaapi.get_widget_vdui(ctx.widget)
+        e = hx_view.item.e
+
+        # e is the vtable slot access, e.g. the 'Func_18' in 'tcb->field_vtable->Func_18'
+        slot_offset = e.m
+        member_expr = e.x
+
+        # member_expr is the vtable pointer member access, e.g. 'tcb->field_vtable'
+        if member_expr.op == idaapi.cot_memptr:
+            typeinfo = member_expr.x.type.get_pointed_object()
+        elif member_expr.op == idaapi.cot_memref:
+            typeinfo = member_expr.x.type
+        else:
+            LOG.error(f'member_expr.op is not memptr or memref')
+            return
+
+        struct_typename = typeinfo.get_type_name()
+        member_offset = member_expr.m
+
+        sid = idc.get_struc_id(struct_typename)
+        if sid == idaapi.BADADDR:
+            LOG.error(f'Failed to get struct id for {struct_typename}')
+            return
+
+        comment = idc.get_member_cmt(sid, member_offset)
+        vtables = []
+        for c in comment.splitlines():
+            if c.startswith("VTABLE: 0x"):
+                _, _, addr_str = c.partition(':')
+                vtables.append(int(addr_str, 16))
+
+        if not vtables:
+            ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(member_offset)}')
+            return
+
+        ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+
+        candidates = []
+        for vtable_ea in vtables:
+            func_ea_ptr = vtable_ea + slot_offset
+            if ptr_size == 8:
+                func_ea = ida_bytes.get_qword(func_ea_ptr)
+            else:
+                func_ea = ida_bytes.get_dword(func_ea_ptr)
+
+            if not func_ea:
+                LOG.debug(f'No function pointer at {hex(func_ea_ptr)} (vtable {hex(vtable_ea)})')
+                continue
+
+            vtable_type = idc.get_type(vtable_ea)
+            vtable_sym = ida_name.get_ea_name(vtable_ea)
+            func_sym = idaapi.get_ea_name(func_ea, idaapi.GN_SHORT | idaapi.GN_DEMANGLED)
+            candidates.append((func_ea, vtable_ea, vtable_type, vtable_sym, func_sym))
+
+        if not candidates:
+            ida_kernwin.warning(f'Could not resolve an implementation at offset {hex(slot_offset)} for any registered vtable')
+            return
+
+        options = []
+        for func_ea, vtable_ea, vtable_type, vtable_sym, func_sym in candidates:
+            options.append([
+                vtable_type or "",
+                vtable_sym or "",
+                f"{vtable_ea:0{16}x}",
+                func_sym or "",
+                f"{func_ea:0{16}x}",
+            ])
+
+        chooser = ImplementationChooser(options)
+        idx = chooser.Show(True)
+
+        if idx < 0:
+            LOG.debug('Cancelled')
+            return
+
+        ida_kernwin.jumpto(candidates[idx][0])
+
+
 
 
 
@@ -1082,6 +1252,7 @@ actions.action_manager.register(CommitType())
 actions.action_manager.register(AnalyzeVtable())
 actions.action_manager.register(SetVtableComment())
 actions.action_manager.register(JumpToVtable())
+actions.action_manager.register(JumpToImplementation())
 
 actions.action_manager.register(HexRaysDebug())
 

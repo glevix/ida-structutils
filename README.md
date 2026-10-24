@@ -15,13 +15,14 @@ Passing --uninstall will delete them
 ## Use
 
 Utils are to be used from the Disassembly view (AnalyzeVtable), or the Pseudocode view (all others).
-All are accessible from the context menus in the view, and some have hotkeys (MakeMember).
+All are accessible from the context menus in the view, and some have hotkeys (MakeMember, JumpToImplementation).
 
 ### MakeStruct
 
 Right click on a number in the decompiler view and select 'Make struct'.
-You will be prompted to provide a name.
-A struct will then be created and populated with a byte array of the clicked-on size.
+You will be prompted to provide a name and a size, the latter defaulting to the clicked-on
+number but editable.
+A struct will then be created and populated with a byte array of the given size.
 
 The action fails if the struct already exists, unless it is unpopulated (often happens with non-standard types, that IDA can infer the existence of through debug info or name demangling).
 In this case, the struct is populated to the correct size.
@@ -60,3 +61,15 @@ Also, the IDA view will jump to the address of the vtable, to facilitate use of 
 Right click on a struct vtable member (previously set with SetVtableComment), and select "Jumpt to vtable". The IDA disassembly view
 will jump to the address of the vtable.
 If multiple vtable commented have been set for the memeber, you will be provided with a dropdown menu to choose from.
+
+### JumpToImplementation
+
+Right click on a vtable slot being called in the Hexrays decompiler view (e.g. the 'Func_18' in
+`tcb->field_vtable->Func_18(tcb)`, where 'field_vtable' was previously tagged with SetVtableComment),
+and select "Jump to implementation" (or click on the slot and hit the hotkey "Ctrl-J").
+For each vtable address registered on 'field_vtable', the called slot's offset is added and
+dereferenced to find the actual implementing function, and the disassembly/pseudocode view jumps
+there directly - no need to jump to the vtable first and double-click the right entry.
+If multiple vtables are registered for the member, you will be provided with a chooser listing each
+candidate's vtable type, vtable symbol name, vtable address, function symbol name, and function
+address, to choose from.
