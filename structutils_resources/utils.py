@@ -35,23 +35,6 @@ def run_form(form, field_names):
     form.Free()
     return ret
 
-class ChooseOptionForm(ida_kernwin.Form):
-    def __init__(self, header, message, items):
-        self.items = items
-        super().__init__(
-            f"""STARTITEM 0
-{header}
-<{message}:{{cbCombo}}>""",
-            {
-                'cbCombo': ida_kernwin.Form.DropdownListControl(
-                    items, readonly=True)
-            }
-        )
-
-def ask_options(header, message, options):
-    (value,) = run_form(ChooseOptionForm(header, message, options), ['cbCombo'])
-    return value
-
 '''
 IDA9 got rid of the ida_struct module, and with it the ida_struct.get_struc function
 '''
