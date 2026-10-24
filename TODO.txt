@@ -7,6 +7,21 @@ List of opens issues and planned features
 	Useful for finding all the ways a virtual function can be reached. Needs a database-wide
 	scan of VTABLE: comments/vtable contents, so more involved than the other items here.
 
+8. Handle vtable pointers hoisted into a local variable before the call, e.g.:
+		v1 = tcb->field_vtable;
+		v1->Func_18(tcb);
+	instead of the direct 'tcb->field_vtable->Func_18(tcb)' form. JumpToImplementation's check()
+	requires the call's function expression to be a member access of another member access
+	(e.x.op in [cot_memptr, cot_memref]); when the vtable pointer comes from a local var instead,
+	e.x is a cot_var and the action doesn't even show up, let alone find the VTABLE: comment(s)
+	on the original member. Would need to trace the local var back to its defining assignment
+	(walk the function body for the cit_expr/cot_asg that set it, similar in spirit to how
+	SetVtable already walks up from a clicked expression to find its enclosing assignment) and
+	resolve that RHS the normal way. CommitType's vtable-slot editing is unaffected by this
+	(it only needs the vtable struct's own member, which get_member_struct_and_offset already
+	finds correctly through a local var); this is specifically a JumpToImplementation problem
+	(and, by extension, anything built the same way in the future).
+
 DONE
 
 6. Extend 'Commit type' to work on virtual (vtable) calls, not just direct named-function calls.
