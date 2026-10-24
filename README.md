@@ -55,6 +55,10 @@ A comment will be appended to the struct member indicating the address of the vt
 The address will be calculated correctly, taking into account possible pointer arithmetic (as is often the case where
 the start of the vtable functions is a few bytes after the referenced symbol).
 Also, the IDA view will jump to the address of the vtable, to facilitate use of "AnalyzeVtable" if needed.
+You will then be asked whether to analyze the vtable right away (same as running "AnalyzeVtable" at
+that address). If you do, and it succeeds, the struct member's type is set to a pointer to the newly
+created vtable struct, and the member is renamed to `__vtable` (or `__vtable_<offset>` if its offset
+within the struct isn't 0).
 
 ### JumpToVtable
 

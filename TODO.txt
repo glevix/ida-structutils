@@ -3,10 +3,6 @@ List of opens issues and planned features
 1. Itanium support
 	When available, use the offset-to-top and typeinfo pointers to better handle the vtable
 
-4. In 'set vtable comment', after completion, ask if user would also like to perform the analysis.
-	If so, then subsequently set the member type to the vtable pointer, and set the field name
-	to __vtable (__vtable_<field_offset> if not 0)
-
 5. In 'analyze vtable', make the initial dialog box ask for both the vtable struct name, and the type of
 	'this', and the name for the vtable symbol. It should provide defaults for all of these, of the
 	following format:
@@ -17,6 +13,13 @@ List of opens issues and planned features
 	If not provided, the class name should be class_<vtable address>
 
 DONE
+
+4. In 'set vtable comment', after completion, ask if user would also like to perform the analysis.
+	If so, then subsequently set the member type to the vtable pointer, and set the field name
+	to __vtable (__vtable_<field_offset> if not 0)
+	Done - added analyze_vtable() (shared with AnalyzeVtable) and set_member_type_to_pointer();
+	SetVtableComment now asks to analyze right away, and on success sets the member's type to a
+	pointer to the new vtable struct and renames it to __vtable / __vtable_<offset>.
 
 2. In pseudocode, allow jumping directly to virtual function implementation when called via
 	a vtable (choose from popup list similar to 'jump to vtable'), instead of the current

@@ -772,46 +772,95 @@ def apply_struct(ea, struct_name):
 
     return True
 
+def analyze_vtable(ea):
+    """
+    Interactive flow shared by AnalyzeVtable and SetVtableComment: determine the vtable's size,
+    ask for a struct name and the type of 'this', create the struct definition and apply it to
+    'ea'. Returns the new struct's name on success, or None if cancelled or failed.
+    """
+    LOG.debug(f'Analyzing vtable at {hex(ea)}')
+    count = get_vtable_size(ea)
+    if not count:
+        ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
+        return None
+
+    name = ida_kernwin.ask_str(f'vtable_{hex(ea)}', 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
+
+    if not name:
+        return None
+
+    tid = ida_typeinf.get_named_type_tid(name)
+    if tid != idaapi.BADADDR:
+        ida_kernwin.warning(f'Type {name} already exists')
+        return None
+
+    this_type = ida_kernwin.ask_str(f'void*', 0, f'Type of "this"?')
+
+    struct_def = make_vtable_def(ea, name, count, this_type)
+
+    if ida_typeinf.idc_parse_types(struct_def, 0):
+        ida_kernwin.warning(f'Could not parse struct definition')
+        LOG.debug(struct_def)
+        return None
+
+    LOG.info(f'Created new struct type {name}')
+
+    if not apply_struct(ea, name):
+        ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
+        return None
+
+    return name
+
+
+def set_member_type_to_pointer(struct_name, member_offset, pointee_type_name):
+    """
+    Set a struct member's type to a pointer to the named type. idc has no direct tinfo-based
+    type setter for struct members (idc.set_member_type only takes classic FF_* flags), so this
+    mirrors idc.py's own set_member_name/set_member_cmt implementation: tinfo_t + find_udm with
+    STRMEM_AUTO (offset in bytes for structs) to get the member index, then the matching
+    udm-level setter.
+    """
+    sid = idc.get_struc_id(struct_name)
+    if sid == idaapi.BADADDR:
+        LOG.error(f'Failed to get struct id for {struct_name}')
+        return False
+
+    pointee_tif = ida_typeinf.tinfo_t()
+    if not pointee_tif.get_named_type(pointee_type_name):
+        LOG.error(f'Could not retrieve type {pointee_type_name}')
+        return False
+
+    ptr_tif = ida_typeinf.tinfo_t()
+    ptr_tif.create_ptr(pointee_tif)
+
+    tif = ida_typeinf.tinfo_t()
+    if not (tif.get_type_by_tid(sid) and tif.is_udt()):
+        LOG.error(f'Failed to get udt type for {struct_name}')
+        return False
+
+    udm = ida_typeinf.udm_t()
+    udm.offset = member_offset
+    idx = tif.find_udm(udm, ida_typeinf.STRMEM_AUTO)
+    if idx == -1:
+        LOG.error(f'Could not find member at offset {hex(member_offset)} in {struct_name}')
+        return False
+
+    if tif.set_udm_type(idx, ptr_tif) != ida_typeinf.TERR_OK:
+        LOG.error(f'Failed to set type of member at offset {hex(member_offset)} in {struct_name}')
+        return False
+
+    return True
+
+
 class AnalyzeVtable(actions.IdaViewPopupAction):
 
     description = 'Analyze vtable'
-    
+
     def __init__(self):
         super(AnalyzeVtable, self).__init__()
 
-
     def activate(self, ctx):
-        ea = ctx.cur_ea
-        LOG.debug(f'Analyzing vtable at {hex(ea)}')
-        count = get_vtable_size(ea)
-        if not count:
-            ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
-            return
-
-        name = ida_kernwin.ask_str(f'vtable_{hex(ea)}', 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
-        
-        if not name:
-            return
-
-        tid = ida_typeinf.get_named_type_tid(name)
-        if tid != idaapi.BADADDR:
-            ida_kernwin.warning(f'Type {name} already exists')
-            return
-
-        this_type = ida_kernwin.ask_str(f'void*', 0, f'Type of "this"?')
-
-        struct_def = make_vtable_def(ea, name, count, this_type)
-        
-        if ida_typeinf.idc_parse_types(struct_def, 0):
-            ida_kernwin.warning(f'Could not parse struct definition')
-            LOG.debug(struct_def)
-            return
-
-        LOG.info(f'Created new struct type {name}')
-
-        if not apply_struct(ea, name):
-            ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
-            return
+        analyze_vtable(ctx.cur_ea)
 
 
 def append_member_comment(struct_name, member_offset, text, ignore_duplicate=True):
@@ -894,6 +943,23 @@ class SetVtableComment(actions.HexRaysPopupAction):
 
         # Jump to the vtable in IDA view, allowing quick access to AnalyzeVtable
         ida_kernwin.jumpto(ea)
+
+        if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_BTN1, 'Would you also like to analyze this vtable now?') != ida_kernwin.ASKBTN_BTN1:
+            return
+
+        vtable_struct_name = analyze_vtable(ea)
+        if not vtable_struct_name:
+            return
+
+        if not set_member_type_to_pointer(struct_name, vtable_member_offset, vtable_struct_name):
+            ida_kernwin.warning(f'Failed to set member type to {vtable_struct_name} *')
+            return
+
+        sid = idc.get_struc_id(struct_name)
+        member_name = '__vtable' if vtable_member_offset == 0 else f'__vtable_{vtable_member_offset:02X}'
+        if not idc.set_member_name(sid, vtable_member_offset, member_name):
+            ida_kernwin.warning(f'Failed to rename member to {member_name}')
+            return
 
     def resolve_assignment_expression(self, e):
 
