@@ -1,5 +1,4 @@
 import idaapi
-#import ida_struct
 import ida_funcs
 import ida_kernwin
 import ida_name
@@ -464,8 +463,9 @@ EXPR_TYPES = {
   66: ('cot_insn', 'instruction in expression, internal representation only'),
   67: ('cot_sizeof', 'sizeof(x)'),
   68: ('cot_helper', 'arbitrary name'),
-  69: ('cot_type', 'arbitrary type'),
-  69: ('cot_last', ''),
+  # cot_type and cot_last share the same value in the SDK (cot_last is defined as an alias
+  # for the last real cot_ op), so only one can be kept as a dict key here
+  69: ('cot_type / cot_last', 'arbitrary type'),
   70: ('cit_empty', 'instruction types start here'),
   71: ('cit_block', 'block-statement: { ... }'),
   72: ('cit_expr', 'expression-statement: expr;'),
