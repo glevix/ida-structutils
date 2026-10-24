@@ -695,6 +695,17 @@ def get_vtable_size(ea):
             break
         endea += ptr_size
 
+        # Sanity check: a wrongly-chosen address could land in a long run of valid code
+        # pointers (e.g. a jump table) and scan far past any real vtable. Let the user bail
+        # out periodically instead of churning silently.
+        entry_count = (endea-ea)//ptr_size
+        if entry_count % 100 == 0:
+            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_BTN1,
+                    f'Still scanning for the end of the vtable at {hex(ea)} - {entry_count} '
+                    f'entries found so far. Continue scanning?') != ida_kernwin.ASKBTN_BTN1:
+                LOG.info(f'Vtable scan at {hex(ea)} stopped by user after {entry_count} entries')
+                break
+
     count = (endea-ea)//ptr_size
     LOG.debug(f'vtable ends at {hex(endea)}')
     LOG.debug(f'vtable contains {count} functions')
