@@ -52,7 +52,7 @@ A struct will then be created which represents the vtable - the functions will h
 chosen 'this' type, and the names will be auto detected via demangling (or simply func_0x... if this fails).
 The new struct type will be applied to the static vtable, and the vtable's symbol will be renamed.
 The IDA View is expanded to show the vtable's members instead of leaving it collapsed to a single
-summary line (equivalent to pressing Ctrl-Numpad+ on it).
+"terse" summary line.
 
 ### SetVtableComment
 

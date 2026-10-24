@@ -3,6 +3,7 @@ import idaapi
 import ida_funcs
 import ida_kernwin
 import ida_name
+import ida_nalt
 import ida_ida
 import ida_bytes
 import ida_typeinf
@@ -771,9 +772,10 @@ def apply_struct(ea, struct_name):
     ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.TINFO_DEFINITE)
 
     # Expand the struct's display in the IDA View instead of leaving it collapsed to a single
-    # summary line - same effect as pressing Ctrl-Numpad+ ("UnHide") on it manually
+    # "terse" summary line
+    ida_nalt.clr_abits(ea, ida_nalt.AFL_TERSESTR)
     ida_kernwin.jumpto(ea)
-    ida_kernwin.process_ui_action("UnHide")
+    ida_kernwin.refresh_idaview_anyway()
 
     return True
 
