@@ -43,7 +43,9 @@ The signature of the function being called will be edited to accept the clicked-
 ### AnalyzeVtable
 
 Right click on the start of a static vtable (or any static array of functions) in the disassembly view (IDA view), and
-select 'Analyze vtable'. The number of functions is auto detected.
+select 'Analyze vtable'. The number of functions is auto detected (if the scan reaches 100 entries
+without finding the end, you'll be asked whether to keep scanning, in case the address wasn't
+actually the start of a vtable).
 You will first be asked for an (optional) class name; if left blank, it defaults to `class_<vtable address>`.
 You will then be asked for the vtable struct name, the type of 'this', and the vtable symbol name, each
 prefilled with a default based on the class name (`vtable_<class>`, `<class> *`, and `<class>::__vtable`
