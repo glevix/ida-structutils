@@ -1144,6 +1144,9 @@ class SetVtableComment(actions.HexRaysPopupAction):
                 sz = e.y.type.get_pointed_object().get_size()
                 return b + sz*a
 
+            LOG.error(f'Addition of two non-pointer expressions - cannot resolve an address')
+            raise StructUtilsException()
+
         # Handle number
         if e.op == idaapi.cot_num:
             return e.numval()
