@@ -22,6 +22,19 @@ List of opens issues and planned features
 	finds correctly through a local var); this is specifically a JumpToImplementation problem
 	(and, by extension, anything built the same way in the future).
 
+9. Properly support a base class with a shorter vtable than an extension class. A function that
+	only knows about the base class still calls through the base class's vtable struct type, even
+	when the actual object (and its real vtable) is the extension class. This renders fine as long
+	as the called slot exists in the base class vtable, but if the extension class introduces a
+	virtual function the base class doesn't declare, there's no slot for it in the base struct and
+	the call can't be rendered/typed through it properly.
+	Not trivial to fix. One idea: retype the vtable pointer as a union of the possible vtable
+	struct types (base/extension), so the bigger one's slots are reachable - but getting IDA/
+	Hex-Rays to pick the right union member automatically in the pseudocode view (rather than
+	needing the user to manually cast at each call site) seems tricky, and may not be possible at
+	all depending on how Hex-Rays resolves union member access when rendering a call. Needs
+	investigation before committing to this approach.
+
 DONE
 
 6. Extend 'Commit type' to work on virtual (vtable) calls, not just direct named-function calls.
