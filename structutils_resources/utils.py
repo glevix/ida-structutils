@@ -1180,6 +1180,25 @@ class SetVtableComment(actions.HexRaysPopupAction):
 
 
 
+def get_registered_vtables(struct_name, member_offset):
+    """
+    Return the list of vtable addresses registered on a struct member via SetVtableComment's
+    "VTABLE: 0x..." comment lines, or an empty list if there are none / the struct doesn't exist.
+    """
+    sid = idc.get_struc_id(struct_name)
+    if sid == idaapi.BADADDR:
+        LOG.error(f'Failed to get struct id for {struct_name}')
+        return []
+
+    comment = idc.get_member_cmt(sid, member_offset) or ""
+    vtables = []
+    for c in comment.splitlines():
+        if c.startswith("VTABLE: 0x"):
+            _, _, addr_str = c.partition(':')
+            vtables.append(int(addr_str, 16))
+    return vtables
+
+
 class VtableChooser(ida_kernwin.Choose):
     def __init__(self, items):
         # items should be a list of lists: [[col1, col2], [col1, col2], ...]
@@ -1238,43 +1257,26 @@ class JumpToVtable(actions.HexRaysPopupAction):
         struct_typename = typeinfo.get_type_name()
         offset = e.m
 
-        sid = idc.get_struc_id(struct_typename)
-        if sid == idaapi.BADADDR:
-            LOG.error(f'Failed to get struct id for {struct_typename}')
-            return False
-
-        comment = idc.get_member_cmt(sid, offset)
-        vtables = []
-        for c in comment.splitlines():
-            if c.startswith("VTABLE: 0x"):
-                _, _, addr_str = c.partition(':')
-                addr = int(addr_str, 16)
-                sym = ida_name.get_ea_name(addr)
-                typename = idc.get_type(addr)
-                LOG.debug(f'vtable: {hex(addr)}, symbol: {sym}, type: {typename}')
-                vtables.append((addr, sym, typename))
-
+        vtables = get_registered_vtables(struct_typename, offset)
         if not vtables:
             ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(offset)}')
             return
 
         options = []
-        for addr, sym, typename in vtables:
-            if sym is None:
-                sym = ""
-            if typename is None:
-                typename = ""
-            option = [f"{addr:0{16}x}", typename, sym]
-            options.append(option)
+        for addr in vtables:
+            sym = ida_name.get_ea_name(addr) or ""
+            typename = idc.get_type(addr) or ""
+            LOG.debug(f'vtable: {hex(addr)}, symbol: {sym}, type: {typename}')
+            options.append([f"{addr:0{16}x}", typename, sym])
 
         chooser = VtableChooser(options)
-        idx = chooser.Show(True) 
+        idx = chooser.Show(True)
 
         if idx < 0:
             LOG.debug('Cancelled')
             return
 
-        ida_kernwin.jumpto(vtables[idx][0])
+        ida_kernwin.jumpto(vtables[idx])
 
 
 class ImplementationChooser(ida_kernwin.Choose):
@@ -1356,18 +1358,7 @@ class JumpToImplementation(actions.HexRaysPopupAction):
         struct_typename = typeinfo.get_type_name()
         member_offset = member_expr.m
 
-        sid = idc.get_struc_id(struct_typename)
-        if sid == idaapi.BADADDR:
-            LOG.error(f'Failed to get struct id for {struct_typename}')
-            return
-
-        comment = idc.get_member_cmt(sid, member_offset)
-        vtables = []
-        for c in comment.splitlines():
-            if c.startswith("VTABLE: 0x"):
-                _, _, addr_str = c.partition(':')
-                vtables.append(int(addr_str, 16))
-
+        vtables = get_registered_vtables(struct_typename, member_offset)
         if not vtables:
             ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(member_offset)}')
             return
