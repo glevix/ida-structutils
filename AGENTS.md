@@ -20,8 +20,9 @@ runtime.
   for popup menu actions in the pseudocode view (`HexRaysPopupAction`) vs. the disassembly view
   (`IdaViewPopupAction`), and the Hex-Rays event callback plumbing.
 - `structutils_resources/utils.py` — all actual features live here as `Action` subclasses
-  (`MakeStruct`, `MakeMember`, `CommitType`, `AnalyzeVtable`, `SetVtableComment`, `JumpToVtable`,
-  plus the debug helper `HexRaysDebug`). Each is instantiated and registered at the bottom of the file.
+  (`MakeStruct`, `MakeMember`, `CommitType`, `AnalyzeVtable`, `SetVtable`, `JumpToVtable`,
+  `RemoveVtable`, `JumpToImplementation`, plus the debug helper `HexRaysDebug`). Each is
+  instantiated and registered at the bottom of the file.
 - `structutils_resources/__init__.py` — re-exports `actions` and `utils`.
 - `install.sh` — copies `structutils.py` and `structutils_resources/` into `~/.idapro/plugins`.
   `install.sh --uninstall` removes them (prompts for confirmation either way).

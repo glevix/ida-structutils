@@ -795,7 +795,7 @@ def ask_analyze_vtable_info(default_name, default_this_type, default_symbol):
 
 def analyze_vtable(ea):
     """
-    Interactive flow shared by AnalyzeVtable and SetVtableComment: determine the vtable's size,
+    Interactive flow shared by AnalyzeVtable and SetVtable: determine the vtable's size,
     ask for a (optional) class name, then ask for the vtable struct name, the type of 'this',
     and the vtable symbol name - defaulting respectively to 'vtable_<class>', '<class> *' and
     '<class>::__vtable' (with <class> defaulting to 'class_<ea>' if left blank). Creates the
@@ -924,12 +924,12 @@ def append_member_comment(struct_name, member_offset, text, ignore_duplicate=Tru
     return True
 
 
-class SetVtableComment(actions.HexRaysPopupAction):
+class SetVtable(actions.HexRaysPopupAction):
 
-    description = 'Set vtable comment'
+    description = 'Set vtable'
 
     def __init__(self):
-        super(SetVtableComment, self).__init__()
+        super(SetVtable, self).__init__()
 
     def check(self, hx_view):
         # Only makes sense for expressions
@@ -1156,9 +1156,23 @@ class SetVtableComment(actions.HexRaysPopupAction):
 
 
 
+def get_member_struct_and_offset(e):
+    """
+    Given a x.m / x->m expression, return (struct_typename, offset) for the member being
+    accessed, or (None, None) if e isn't a direct member access.
+    """
+    if e.op == idaapi.cot_memptr:
+        typeinfo = e.x.type.get_pointed_object()
+    elif e.op == idaapi.cot_memref:
+        typeinfo = e.x.type
+    else:
+        return None, None
+    return typeinfo.get_type_name(), e.m
+
+
 def get_registered_vtables(struct_name, member_offset):
     """
-    Return the list of vtable addresses registered on a struct member via SetVtableComment's
+    Return the list of vtable addresses registered on a struct member via SetVtable's
     "VTABLE: 0x..." comment lines, or an empty list if there are none / the struct doesn't exist.
     """
     sid = idc.get_struc_id(struct_name)
@@ -1175,15 +1189,50 @@ def get_registered_vtables(struct_name, member_offset):
     return vtables
 
 
+def remove_registered_vtable(struct_name, member_offset, vtable_ea):
+    """
+    Remove a single "VTABLE: 0x..." line (matching vtable_ea) from a member's comment, leaving
+    any other comment lines (including other registered vtables) untouched.
+    """
+    sid = idc.get_struc_id(struct_name)
+    if sid == idaapi.BADADDR:
+        LOG.error(f'Failed to get struct id for {struct_name}')
+        return False
+
+    old_lines = (idc.get_member_cmt(sid, member_offset) or "").splitlines()
+    target = f'VTABLE: {hex(vtable_ea)}'
+    new_lines = [l for l in old_lines if l != target]
+
+    if len(new_lines) == len(old_lines):
+        LOG.warning(f'Vtable {hex(vtable_ea)} not found in comment for {struct_name} offset {hex(member_offset)}')
+        return False
+
+    idc.set_member_cmt(sid, member_offset, '\n'.join(new_lines), 0)
+    return True
+
+
+def build_vtable_options(vtables):
+    """
+    Build the [address, type, symbol] rows VtableChooser expects, for a list of vtable addresses.
+    """
+    options = []
+    for addr in vtables:
+        sym = ida_name.get_ea_name(addr) or ""
+        typename = idc.get_type(addr) or ""
+        LOG.debug(f'vtable: {hex(addr)}, symbol: {sym}, type: {typename}')
+        options.append([f"{addr:0{16}x}", typename, sym])
+    return options
+
+
 class VtableChooser(ida_kernwin.Choose):
-    def __init__(self, items):
-        # items should be a list of lists: [[col1, col2], [col1, col2], ...]
+    def __init__(self, items, title="Select a vtable"):
+        # items should be a list of lists: [[col1, col2, col3], ...]
         super().__init__(
-            "Select a vtable",
+            title,
             [
                 ["Address", 16],
                 ["Type", 30],
-                ["Name", 30],
+                ["Symbol", 30],
             ],
             flags=ida_kernwin.Choose.CH_MODAL
         )
@@ -1222,30 +1271,17 @@ class JumpToVtable(actions.HexRaysPopupAction):
         hx_view = idaapi.get_widget_vdui(ctx.widget)
         e = hx_view.item.e
 
-        if e.op == idaapi.cot_memptr:
-            typeinfo = e.x.type.get_pointed_object()
-        elif e.op == idaapi.cot_memref:
-            typeinfo = e.x.type
-        else:
+        struct_typename, offset = get_member_struct_and_offset(e)
+        if struct_typename is None:
             LOG.error(f'e.op is not memptr or memref')
             return
-
-        struct_typename = typeinfo.get_type_name()
-        offset = e.m
 
         vtables = get_registered_vtables(struct_typename, offset)
         if not vtables:
             ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(offset)}')
             return
 
-        options = []
-        for addr in vtables:
-            sym = ida_name.get_ea_name(addr) or ""
-            typename = idc.get_type(addr) or ""
-            LOG.debug(f'vtable: {hex(addr)}, symbol: {sym}, type: {typename}')
-            options.append([f"{addr:0{16}x}", typename, sym])
-
-        chooser = VtableChooser(options)
+        chooser = VtableChooser(build_vtable_options(vtables))
         idx = chooser.Show(True)
 
         if idx < 0:
@@ -1253,6 +1289,58 @@ class JumpToVtable(actions.HexRaysPopupAction):
             return
 
         ida_kernwin.jumpto(vtables[idx])
+
+
+class RemoveVtable(actions.HexRaysPopupAction):
+    """
+    Provides a 'Remove vtable' option when right-clicking a struct vtable member (previously
+    tagged by SetVtable). Prompts with a chooser (address/type/symbol) if multiple vtables are
+    registered on the member, and removes only the selected one, leaving any others intact.
+    """
+
+    description = 'Remove vtable'
+
+    def __init__(self):
+        super(RemoveVtable, self).__init__()
+
+    def check(self, hx_view):
+        # Only makes sense for expressions
+        if hx_view.item.citype != idaapi.VDI_EXPR:
+            return False
+
+        # Only makes sense for accessing a member of a struct
+        if hx_view.item.e.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
+            return False
+
+        return True
+
+    def activate(self, ctx):
+
+        hx_view = idaapi.get_widget_vdui(ctx.widget)
+        e = hx_view.item.e
+
+        struct_typename, offset = get_member_struct_and_offset(e)
+        if struct_typename is None:
+            LOG.error(f'e.op is not memptr or memref')
+            return
+
+        vtables = get_registered_vtables(struct_typename, offset)
+        if not vtables:
+            ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(offset)}')
+            return
+
+        chooser = VtableChooser(build_vtable_options(vtables), title="Select a vtable to remove")
+        idx = chooser.Show(True)
+
+        if idx < 0:
+            LOG.debug('Cancelled')
+            return
+
+        if not remove_registered_vtable(struct_typename, offset, vtables[idx]):
+            ida_kernwin.warning(f'Failed to remove vtable {hex(vtables[idx])}')
+            return
+
+        hx_view.refresh_view(True)
 
 
 class ImplementationChooser(ida_kernwin.Choose):
@@ -1282,7 +1370,7 @@ class JumpToImplementation(actions.HexRaysPopupAction):
     """
     Provides a 'Jump to implementation' option when right-clicking a vtable slot access
     (e.g. the 'Func_18' in 'tcb->field_vtable->Func_18(tcb)'), where 'field_vtable' is a
-    member previously tagged by SetVtableComment. Instead of jumping to the vtable itself
+    member previously tagged by SetVtable. Instead of jumping to the vtable itself
     (JumpToVtable) and then manually locating the right function, this resolves the actual
     function address(es) directly: for each vtable address found in field_vtable's VTABLE:
     comment(s), it adds the clicked slot's offset and dereferences, then jumps straight to
@@ -1307,7 +1395,7 @@ class JumpToImplementation(actions.HexRaysPopupAction):
         if e.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
             return False
 
-        # ...of another member access (the vtable pointer member, tagged by SetVtableComment)
+        # ...of another member access (the vtable pointer member, tagged by SetVtable)
         if e.x.op not in [idaapi.cot_memptr, idaapi.cot_memref]:
             return False
 
@@ -1323,16 +1411,10 @@ class JumpToImplementation(actions.HexRaysPopupAction):
         member_expr = e.x
 
         # member_expr is the vtable pointer member access, e.g. 'tcb->field_vtable'
-        if member_expr.op == idaapi.cot_memptr:
-            typeinfo = member_expr.x.type.get_pointed_object()
-        elif member_expr.op == idaapi.cot_memref:
-            typeinfo = member_expr.x.type
-        else:
+        struct_typename, member_offset = get_member_struct_and_offset(member_expr)
+        if struct_typename is None:
             LOG.error(f'member_expr.op is not memptr or memref')
             return
-
-        struct_typename = typeinfo.get_type_name()
-        member_offset = member_expr.m
 
         vtables = get_registered_vtables(struct_typename, member_offset)
         if not vtables:
@@ -1433,8 +1515,9 @@ actions.action_manager.register(MakeStruct())
 actions.action_manager.register(CommitType())
 
 actions.action_manager.register(AnalyzeVtable())
-actions.action_manager.register(SetVtableComment())
+actions.action_manager.register(SetVtable())
 actions.action_manager.register(JumpToVtable())
+actions.action_manager.register(RemoveVtable())
 actions.action_manager.register(JumpToImplementation())
 
 actions.action_manager.register(HexRaysDebug())

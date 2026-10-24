@@ -58,9 +58,9 @@ The new struct type will be applied to the static vtable, and the vtable's symbo
 The IDA View is expanded to show the vtable's members instead of leaving it collapsed to a single
 "terse" summary line.
 
-### SetVtableComment
+### SetVtable
 
-Right click on an assigment of a global vtable to a struct member in the Hexrays decompiler view, and select 'Set vtable comment'.
+Right click on an assigment of a global vtable to a struct member in the Hexrays decompiler view, and select 'Set vtable'.
 The target member must be pointer-sized. If it's part of a larger byte array (e.g. an
 auto-generated `field_XX` array that hasn't been split yet), a pointer-sized member is carved out
 of it at the assigned offset first, the same way MakeMember would. If it's some other, differently
@@ -77,14 +77,20 @@ immediately.
 
 ### JumpToVtable
 
-Right click on a struct vtable member (previously set with SetVtableComment), and select "Jumpt to vtable". The IDA disassembly view
+Right click on a struct vtable member (previously set with SetVtable), and select "Jumpt to vtable". The IDA disassembly view
 will jump to the address of the vtable.
 If multiple vtable commented have been set for the memeber, you will be provided with a dropdown menu to choose from.
+
+### RemoveVtable
+
+Right click on a struct vtable member (previously set with SetVtable), and select "Remove vtable".
+You'll get a chooser (address/type/symbol, same as JumpToVtable's) listing all vtables registered
+on the member - pick one to remove just that entry, leaving any others on the member untouched.
 
 ### JumpToImplementation
 
 Right click on a vtable slot being called in the Hexrays decompiler view (e.g. the 'Func_18' in
-`tcb->field_vtable->Func_18(tcb)`, where 'field_vtable' was previously tagged with SetVtableComment),
+`tcb->field_vtable->Func_18(tcb)`, where 'field_vtable' was previously tagged with SetVtable),
 and select "Jump to implementation" (or click on the slot and hit the hotkey "Ctrl-J").
 For each vtable address registered on 'field_vtable', the vtable's size is determined (the same
 way AnalyzeVtable does) and candidates too small to have an entry at the called slot are pruned -

@@ -30,8 +30,9 @@ DONE
 	If so, then subsequently set the member type to the vtable pointer, and set the field name
 	to __vtable (__vtable_<field_offset> if not 0)
 	Done - added analyze_vtable() (shared with AnalyzeVtable) and set_member_type_to_pointer();
-	SetVtableComment now asks to analyze right away, and on success sets the member's type to a
-	pointer to the new vtable struct and renames it to __vtable / __vtable_<offset>.
+	SetVtable (renamed from SetVtableComment) now asks to analyze right away, and on success
+	sets the member's type to a pointer to the new vtable struct and renames it to
+	__vtable / __vtable_<offset>.
 
 2. In pseudocode, allow jumping directly to virtual function implementation when called via
 	a vtable (choose from popup list similar to 'jump to vtable'), instead of the current
