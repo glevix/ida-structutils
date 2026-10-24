@@ -3,6 +3,8 @@ List of opens issues and planned features
 1. Itanium support
 	When available, use the offset-to-top and typeinfo pointers to better handle the vtable
 
+DONE
+
 5. In 'analyze vtable', make the initial dialog box ask for both the vtable struct name, and the type of
 	'this', and the name for the vtable symbol. It should provide defaults for all of these, of the
 	following format:
@@ -11,8 +13,9 @@ List of opens issues and planned features
 		symbol: <class>::__vtable
 	The 'class' should be determined by a preceding dialog box that asks for the class name (optional).
 	If not provided, the class name should be class_<vtable address>
-
-DONE
+	Done - analyze_vtable() now asks for an optional class name first, then shows a form
+	(AnalyzeVtableForm) with struct name / this type / symbol fields prefilled with the
+	spec's defaults, and renames the vtable symbol via ida_name.set_name() on success.
 
 4. In 'set vtable comment', after completion, ask if user would also like to perform the analysis.
 	If so, then subsequently set the member type to the vtable pointer, and set the field name

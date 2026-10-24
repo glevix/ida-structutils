@@ -43,10 +43,14 @@ The signature of the function being called will be edited to accept the clicked-
 ### AnalyzeVtable
 
 Right click on the start of a static vtable (or any static array of functions) in the disassembly view (IDA view), and
-select 'Analyze vtable'. The number of functions is auto detected, and a struct will be created which represents the vtable. 
-The functions will have a first argument of the chosen type (or void pointer), and the names will be auto detected
-via demangling (or simply func_0x... if this fails).
-The new type will be applied to the static vtable.
+select 'Analyze vtable'. The number of functions is auto detected.
+You will first be asked for an (optional) class name; if left blank, it defaults to `class_<vtable address>`.
+You will then be asked for the vtable struct name, the type of 'this', and the vtable symbol name, each
+prefilled with a default based on the class name (`vtable_<class>`, `<class> *`, and `<class>::__vtable`
+respectively), but editable.
+A struct will then be created which represents the vtable - the functions will have a first argument of the
+chosen 'this' type, and the names will be auto detected via demangling (or simply func_0x... if this fails).
+The new struct type will be applied to the static vtable, and the vtable's symbol will be renamed.
 
 ### SetVtableComment
 

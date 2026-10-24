@@ -772,11 +772,41 @@ def apply_struct(ea, struct_name):
 
     return True
 
+class AnalyzeVtableForm(ida_kernwin.Form):
+    def __init__(self, default_name, default_this_type, default_symbol):
+        super().__init__(
+            """STARTITEM 0
+Analyze vtable
+<Struct name:{name}>
+<Type of 'this':{this_type}>
+<Vtable symbol:{symbol}>
+""",
+            {
+                'name': ida_kernwin.Form.StringInput(value=default_name),
+                'this_type': ida_kernwin.Form.StringInput(value=default_this_type),
+                'symbol': ida_kernwin.Form.StringInput(value=default_symbol),
+            }
+        )
+
+def ask_analyze_vtable_info(default_name, default_this_type, default_symbol):
+    f = AnalyzeVtableForm(default_name, default_this_type, default_symbol)
+    f.Compile()
+    result = f.Execute()
+    if result == 1:
+        ret = (f.name.value, f.this_type.value, f.symbol.value)
+    else:
+        ret = (None, None, None)
+    f.Free()
+    return ret
+
 def analyze_vtable(ea):
     """
     Interactive flow shared by AnalyzeVtable and SetVtableComment: determine the vtable's size,
-    ask for a struct name and the type of 'this', create the struct definition and apply it to
-    'ea'. Returns the new struct's name on success, or None if cancelled or failed.
+    ask for a (optional) class name, then ask for the vtable struct name, the type of 'this',
+    and the vtable symbol name - defaulting respectively to 'vtable_<class>', '<class> *' and
+    '<class>::__vtable' (with <class> defaulting to 'class_<ea>' if left blank). Creates the
+    struct definition, applies it to 'ea', and renames the vtable symbol.
+    Returns the new struct's name on success, or None if cancelled or failed.
     """
     LOG.debug(f'Analyzing vtable at {hex(ea)}')
     count = get_vtable_size(ea)
@@ -784,7 +814,12 @@ def analyze_vtable(ea):
         ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
         return None
 
-    name = ida_kernwin.ask_str(f'vtable_{hex(ea)}', 0, f'vtable at {hex(ea)} has {count} entries. Create and assign a vtable struct? New vtable name:')
+    class_name = ida_kernwin.ask_str("", 0, "Class name (optional):")
+    if not class_name:
+        class_name = f'class_{hex(ea)}'
+
+    name, this_type, symbol = ask_analyze_vtable_info(
+        f'vtable_{class_name}', f'{class_name} *', f'{class_name}::__vtable')
 
     if not name:
         return None
@@ -793,8 +828,6 @@ def analyze_vtable(ea):
     if tid != idaapi.BADADDR:
         ida_kernwin.warning(f'Type {name} already exists')
         return None
-
-    this_type = ida_kernwin.ask_str(f'void*', 0, f'Type of "this"?')
 
     struct_def = make_vtable_def(ea, name, count, this_type)
 
@@ -808,6 +841,9 @@ def analyze_vtable(ea):
     if not apply_struct(ea, name):
         ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
         return None
+
+    if symbol and not ida_name.set_name(ea, symbol, ida_name.SN_NOCHECK):
+        ida_kernwin.warning(f'Could not rename vtable at {hex(ea)} to {symbol}')
 
     return name
 
