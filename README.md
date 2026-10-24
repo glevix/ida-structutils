@@ -51,6 +51,8 @@ respectively), but editable.
 A struct will then be created which represents the vtable - the functions will have a first argument of the
 chosen 'this' type, and the names will be auto detected via demangling (or simply func_0x... if this fails).
 The new struct type will be applied to the static vtable, and the vtable's symbol will be renamed.
+The IDA View is expanded to show the vtable's members instead of leaving it collapsed to a single
+summary line (equivalent to pressing Ctrl-Numpad+ on it).
 
 ### SetVtableComment
 
@@ -62,7 +64,8 @@ Also, the IDA view will jump to the address of the vtable, to facilitate use of 
 You will then be asked whether to analyze the vtable right away (same as running "AnalyzeVtable" at
 that address). If you do, and it succeeds, the struct member's type is set to a pointer to the newly
 created vtable struct, and the member is renamed to `__vtable` (or `__vtable_<offset>` if its offset
-within the struct isn't 0).
+within the struct isn't 0). The Hexrays view is refreshed so the new type and name are visible
+immediately.
 
 ### JumpToVtable
 

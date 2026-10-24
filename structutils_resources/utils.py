@@ -770,6 +770,11 @@ def apply_struct(ea, struct_name):
     ida_bytes.del_items(ea, 0, tif.get_size())
     ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.TINFO_DEFINITE)
 
+    # Expand the struct's display in the IDA View instead of leaving it collapsed to a single
+    # summary line - same effect as pressing Ctrl-Numpad+ ("UnHide") on it manually
+    ida_kernwin.jumpto(ea)
+    ida_kernwin.process_ui_action("UnHide")
+
     return True
 
 class AnalyzeVtableForm(ida_kernwin.Form):
@@ -996,6 +1001,8 @@ class SetVtableComment(actions.HexRaysPopupAction):
         if not idc.set_member_name(sid, vtable_member_offset, member_name):
             ida_kernwin.warning(f'Failed to rename member to {member_name}')
             return
+
+        hx_view.refresh_view(True)
 
     def resolve_assignment_expression(self, e):
 
