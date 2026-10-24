@@ -987,6 +987,10 @@ class SetVtableComment(actions.HexRaysPopupAction):
             ida_kernwin.warning(f'Failed to resolve assignment expression')
             return
 
+        # resolve_assignment_expression may have carved a pointer-sized member out of a larger
+        # byte array - refresh so that change is visible immediately, same as after MakeMember
+        hx_view.refresh_view(True)
+
         LOG.debug(f'Got struct {struct_name}, offset {hex(vtable_member_offset)}')
         
         if not append_member_comment(struct_name, vtable_member_offset, f'VTABLE: {hex(ea)}'):
@@ -1019,34 +1023,100 @@ class SetVtableComment(actions.HexRaysPopupAction):
 
         LOG.debug(f'Resolving assignment expression: {expr_str(e.op)}')
 
-        # Handle x.m
-        if e.op == idaapi.cot_memref:
-            typeinfo = e.x.type
-            typename = typeinfo.get_type_name()
-            if not typename:
-                LOG.error(f'Could not get type name')
-                raise StructUtilsException()
-            if not typeinfo.is_struct():
-                LOG.error(f'Type {typename} is not a struct')
-                raise StructUtilsException()
-            return typename, e.m
+        # Handle x.m / x->m - direct member access
+        if e.op in (idaapi.cot_memref, idaapi.cot_memptr):
+            return self.resolve_member_access(e, e.m)
 
-        # Handle x->m
-        if e.op == idaapi.cot_memptr:
-            typeinfo = e.x.type.get_pointed_object()
-            typename = typeinfo.get_type_name()
-            if not typename:
-                LOG.error(f'Could not get type name')
-                raise StructUtilsException()
-            if not typeinfo.is_struct():
-                LOG.error(f'Type {typename} is not a struct')
-                raise StructUtilsException()
-            if e.ptrsize != self.ptr_size:
-                LOG.error(f'Access size of {e.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
-                raise StructUtilsException()
-            return typename, e.m
+        # Handle *(T *)[&]x->m[n] = ... - writing into a (possibly indexed) byte array member
+        # that isn't pointer-sized on its own and needs to be carved, same as MakeMember would
+        if e.op == idaapi.cot_ptr:
+            return self.carve_member_access(e)
 
         LOG.error(f'unhandled op')
+        raise StructUtilsException()
+
+    def resolve_member_access(self, e, offset):
+
+        if e.op == idaapi.cot_memref:
+            typeinfo = e.x.type
+        elif e.op == idaapi.cot_memptr:
+            typeinfo = e.x.type.get_pointed_object()
+        else:
+            LOG.error(f'unhandled op')
+            raise StructUtilsException()
+
+        typename = typeinfo.get_type_name()
+        if not typename:
+            LOG.error(f'Could not get type name')
+            raise StructUtilsException()
+        if not typeinfo.is_struct():
+            LOG.error(f'Type {typename} is not a struct')
+            raise StructUtilsException()
+
+        if e.op == idaapi.cot_memptr and e.ptrsize != self.ptr_size:
+            LOG.error(f'Access size of {e.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
+            raise StructUtilsException()
+
+        sid = idc.get_struc_id(typename)
+        _, member_size = get_member_details(sid, offset)
+        if member_size == self.ptr_size:
+            return typename, offset
+
+        LOG.debug(f'Member at offset {hex(offset)} in {typename} is {member_size} bytes, not pointer '
+                  f'sized - attempting to carve out a pointer-sized member')
+        if make_member_from_array(typename, offset, 0, self.ptr_size, member_name=None):
+            return typename, offset
+
+        LOG.error(f'Member at offset {hex(offset)} in {typename} is {member_size} bytes (expected '
+                  f'{self.ptr_size}), and could not be carved into a pointer-sized member')
+        raise StructUtilsException()
+
+    def carve_member_access(self, ptr_expression):
+
+        if ptr_expression.ptrsize != self.ptr_size:
+            LOG.error(f'Access size of {ptr_expression.ptrsize} differs from sizeof(void*) which is {self.ptr_size}')
+            raise StructUtilsException()
+
+        casting_expression = ptr_expression.x
+        if casting_expression.op != idaapi.cot_cast:
+            LOG.error(f'Aborting: ptr expression does not wrap a cast ({expr_str(casting_expression.op)})')
+            raise StructUtilsException()
+
+        inner_expression = casting_expression.x
+        offset_in_array = 0
+        if inner_expression.op == idaapi.cot_ref:
+            idx_expression = inner_expression.x
+            if idx_expression.op != idaapi.cot_idx:
+                LOG.error(f'Aborting: ref expression does not wrap an idx ({expr_str(idx_expression.op)})')
+                raise StructUtilsException()
+            indexee_expression = idx_expression.x
+            offset_in_array = idx_expression.y.numval()
+        else:
+            indexee_expression = inner_expression
+
+        if indexee_expression.op == idaapi.cot_memptr:
+            typeinfo = indexee_expression.x.type.get_pointed_object()
+        elif indexee_expression.op == idaapi.cot_memref:
+            typeinfo = indexee_expression.x.type
+        else:
+            LOG.error(f'Aborting: indexee expression is not a memref or memptr ({expr_str(indexee_expression.op)})')
+            raise StructUtilsException()
+
+        typename = typeinfo.get_type_name()
+        if not typename:
+            LOG.error(f'Could not get type name')
+            raise StructUtilsException()
+        if not typeinfo.is_struct():
+            LOG.error(f'Type {typename} is not a struct')
+            raise StructUtilsException()
+
+        array_offset = indexee_expression.m
+        member_offset = array_offset + offset_in_array
+
+        if make_member_from_array(typename, array_offset, offset_in_array, self.ptr_size, member_name=None):
+            return typename, member_offset
+
+        LOG.error(f'Could not carve a pointer-sized member at offset {hex(member_offset)} in {typename}')
         raise StructUtilsException()
 
 

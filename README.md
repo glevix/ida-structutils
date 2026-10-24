@@ -59,6 +59,10 @@ The IDA View is expanded to show the vtable's members instead of leaving it coll
 ### SetVtableComment
 
 Right click on an assigment of a global vtable to a struct member in the Hexrays decompiler view, and select 'Set vtable comment'.
+The target member must be pointer-sized. If it's part of a larger byte array (e.g. an
+auto-generated `field_XX` array that hasn't been split yet), a pointer-sized member is carved out
+of it at the assigned offset first, the same way MakeMember would. If it's some other, differently
+sized member, the action fails with a clear error instead of silently misinterpreting the write.
 A comment will be appended to the struct member indicating the address of the vtable.
 The address will be calculated correctly, taking into account possible pointer arithmetic (as is often the case where
 the start of the vtable functions is a few bytes after the referenced symbol).
