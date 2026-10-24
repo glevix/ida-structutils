@@ -20,6 +20,21 @@ LOG.setLevel(logging.DEBUG)
 class StructUtilsException(Exception):
     pass
 
+def run_form(form, field_names):
+    """
+    Compile, execute and free an ida_kernwin.Form. Returns a tuple of the named fields'
+    values (in order) if the user confirmed the dialog, or a same-length tuple of Nones if
+    they cancelled it.
+    """
+    form.Compile()
+    result = form.Execute()
+    if result == 1:
+        ret = tuple(getattr(form, name).value for name in field_names)
+    else:
+        ret = tuple(None for name in field_names)
+    form.Free()
+    return ret
+
 class ChooseOptionForm(ida_kernwin.Form):
     def __init__(self, header, message, items):
         self.items = items
@@ -34,15 +49,8 @@ class ChooseOptionForm(ida_kernwin.Form):
         )
 
 def ask_options(header, message, options):
-    f = ChooseOptionForm(header, message, options)
-    f.Compile()
-    result = f.Execute()
-    if result == 1:
-        ret = f.cbCombo.value
-    else:
-        ret = None
-    f.Free()
-    return ret
+    (value,) = run_form(ChooseOptionForm(header, message, options), ['cbCombo'])
+    return value
 
 '''
 IDA9 got rid of the ida_struct module, and with it the ida_struct.get_struc function
@@ -172,15 +180,7 @@ New struct
         )
 
 def ask_struct_info(default_size):
-    f = MakeStructForm(default_size)
-    f.Compile()
-    result = f.Execute()
-    if result == 1:
-        ret = (f.name.value, f.size.value)
-    else:
-        ret = (None, None)
-    f.Free()
-    return ret
+    return run_form(MakeStructForm(default_size), ['name', 'size'])
 
 '''
 Provides a 'Make struct' option in the dissasembly context right-click dropdown list,
@@ -807,15 +807,8 @@ Analyze vtable
         )
 
 def ask_analyze_vtable_info(default_name, default_this_type, default_symbol):
-    f = AnalyzeVtableForm(default_name, default_this_type, default_symbol)
-    f.Compile()
-    result = f.Execute()
-    if result == 1:
-        ret = (f.name.value, f.this_type.value, f.symbol.value)
-    else:
-        ret = (None, None, None)
-    f.Free()
-    return ret
+    form = AnalyzeVtableForm(default_name, default_this_type, default_symbol)
+    return run_form(form, ['name', 'this_type', 'symbol'])
 
 def analyze_vtable(ea):
     """
