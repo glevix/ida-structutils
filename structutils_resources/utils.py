@@ -836,6 +836,15 @@ def analyze_vtable(ea):
         ida_kernwin.warning(f'Type {name} already exists')
         return None
 
+    # Validate 'this_type' the same way it'll actually be used (as a function pointer argument),
+    # so an unknown/misspelled class type fails here with a clear message instead of as an opaque
+    # "Could not parse struct definition" once embedded in every entry of the vtable struct_def.
+    if idc.parse_decl(f'int (*__validate_this_type__)({this_type});', ida_typeinf.PT_SIL) is None:
+        ida_kernwin.warning(
+            f'"{this_type}" is not a known type. Define the class struct first (e.g. with '
+            f'"Make struct"), or use "void *" for the type of \'this\'.')
+        return None
+
     struct_def = make_vtable_def(ea, name, count, this_type)
 
     if ida_typeinf.idc_parse_types(struct_def, 0):

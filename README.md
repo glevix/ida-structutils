@@ -47,7 +47,9 @@ select 'Analyze vtable'. The number of functions is auto detected.
 You will first be asked for an (optional) class name; if left blank, it defaults to `class_<vtable address>`.
 You will then be asked for the vtable struct name, the type of 'this', and the vtable symbol name, each
 prefilled with a default based on the class name (`vtable_<class>`, `<class> *`, and `<class>::__vtable`
-respectively), but editable.
+respectively), but editable. If the 'this' type doesn't resolve to a known type (e.g. the class
+struct hasn't been created yet), you'll get a clear warning telling you to define it first (e.g.
+with "Make struct") or use `void *`, instead of an opaque parse failure.
 A struct will then be created which represents the vtable - the functions will have a first argument of the
 chosen 'this' type, and the names will be auto detected via demangling (or simply func_0x... if this fails).
 The new struct type will be applied to the static vtable, and the vtable's symbol will be renamed.
