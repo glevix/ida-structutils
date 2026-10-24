@@ -28,12 +28,30 @@ List of opens issues and planned features
 	as the called slot exists in the base class vtable, but if the extension class introduces a
 	virtual function the base class doesn't declare, there's no slot for it in the base struct and
 	the call can't be rendered/typed through it properly.
-	Not trivial to fix. One idea: retype the vtable pointer as a union of the possible vtable
-	struct types (base/extension), so the bigger one's slots are reachable - but getting IDA/
-	Hex-Rays to pick the right union member automatically in the pseudocode view (rather than
-	needing the user to manually cast at each call site) seems tricky, and may not be possible at
-	all depending on how Hex-Rays resolves union member access when rendering a call. Needs
-	investigation before committing to this approach.
+	Not trivial to fix, and no single fix covers every case - depends on whether the registered
+	vtables on the member form a chain (Base -> Derived -> Derived2, each one strictly extending
+	the previous) or diverge into siblings (Base extended independently by e.g. Reptile and
+	Mammal, each adding their own unrelated slot(s) at the same index). Two-tier approach:
+		a) Chain case: before assuming the largest registered vtable is a safe stand-in for the
+		   member's type, actually verify it - compare slot signatures (not just size) across all
+		   registered variants at every shared index. If they all agree, retyping the member to
+		   the largest is provably safe (every existing call site renders identically, since the
+		   shared prefix is unchanged) and newly-reachable slots render correctly too. Safe to do
+		   automatically.
+		b) Diverging/sibling case (no total order - "largest" is meaningless, e.g. Reptile and
+		   Mammal are both size 2 but slot 1 means something different in each): there's no
+		   single statically-correct type, so don't guess - retype the member to a union of the
+		   known vtable struct types (one arm per registered variant, reusing the same VTABLE:
+		   data SetVtable/JumpToVtable/JumpToImplementation already track) and let the analyst
+		   pick the right arm per call site. Rather than expecting Hex-Rays to auto-select the
+		   right union member (unreliable/unclear if even possible), provide an action at an
+		   unrenderable or ambiguous vtable-slot call that lists the known variants and inserts
+		   the appropriate cast at that specific call site when the analyst confirms which
+		   subclass it actually is - i.e. automate the manual "change variable type"/cast
+		   workaround instead of trying to make Hex-Rays guess it. A wrong automatic guess here
+		   is worse than today's behavior: an unrenderable call is an honest "doesn't understand
+		   this," but a confidently-wrong slot name (e.g. showing lay_egg() for a call that's
+		   actually start_heating_blood()) is a landmine for whoever reads the pseudocode later.
 
 DONE
 
