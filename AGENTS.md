@@ -71,3 +71,24 @@ needed rather than claiming verification you can't actually perform.
   `ida_kernwin.warning(...)` to the user in addition to logging.
 - README.md is the user-facing feature doc — if you change an action's behavior or add a new one,
   update the corresponding section there too.
+
+## Agent/headless-friendly core functions
+
+Several `Action.activate()` methods are thin wrappers around a plain, dialog-free function that
+does the actual work, so a script (or an MCP driving IDA programmatically) can call the real
+logic directly with explicit arguments instead of going through a popup menu and a cursor
+position. The pattern, if you're adding a new interactive action or extending an existing one:
+- Put the actual state-changing logic in a free function taking explicit parameters (not `ctx`/
+  `hx_view`), e.g. `create_vtable_struct(ea, name, this_type, ...)`, `create_sized_struct(name, size)`,
+  `resolve_vtable_implementations(struct_name, member_offset, slot_offset, ...)`. The `Action`
+  class's `activate()` just gathers inputs (from dialogs, or from the clicked AST) and calls it.
+- Any dialog that can't be answered outside the interactive UI (`ida_kernwin.ask_yn`/`ask_str`,
+  `Form.Execute`, `Choose.Show`) belongs only in the interactive wrapper, never in the core
+  function — it would hang or misbehave under a headless/scripted caller.
+- A scan with no natural bound that might legitimately prompt the user mid-way (see
+  `get_vtable_size`'s every-100-entries check) takes a `warn_large_vtable=True` kwarg; headless
+  callers pass `False` to log-and-continue instead of calling `ask_yn`.
+- Error reporting in a core function goes through `report_error(message, show_errors=True)`
+  instead of calling `ida_kernwin.warning(...)` directly — it always logs, and only pops a modal
+  warning when `show_errors` is true (the default, which is what keeps the GUI flow byte-for-byte
+  unchanged). Headless callers pass `show_errors=False`.

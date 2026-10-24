@@ -19,6 +19,17 @@ LOG.setLevel(logging.DEBUG)
 class StructUtilsException(Exception):
     pass
 
+def report_error(message, show_errors=True):
+    """
+    Log an error, and optionally also surface it as a modal ida_kernwin.warning popup.
+    Lets the non-interactive core of an action report failures usefully either way: with a
+    popup for the regular GUI flow (show_errors=True, the default), or log-only for headless/
+    scripted callers (show_errors=False) where a popup can't be answered.
+    """
+    LOG.warning(message)
+    if show_errors:
+        ida_kernwin.warning(message)
+
 def run_form(form, field_names):
     """
     Compile, execute and free an ida_kernwin.Form. Returns a tuple of the named fields'
@@ -164,6 +175,47 @@ New struct
 def ask_struct_info(default_size):
     return run_form(MakeStructForm(default_size), ['name', 'size'])
 
+def create_sized_struct(name, size):
+    """
+    Non-interactive core of 'Make struct': create a new struct type named 'name' (or populate
+    an existing-but-unpopulated one), with a single byte-array member of 'size' bytes. No
+    dialogs - safe to call directly from headless/scripted code.
+    Returns True on success, False on failure.
+    """
+    if not size or size <= 0:
+        LOG.warning(f'Illegal size {size}')
+        return False
+
+    tid = ida_typeinf.get_named_type_tid(name)
+    if tid != idaapi.BADADDR:
+        tif = ida_typeinf.tinfo_t()
+        if not tif.get_type_by_tid(tid):
+            LOG.warning(f'"{name}" has a tid but no type - bug in IDA?')
+            return False
+        if tif.present():
+            LOG.warning(f'"{name}" already exists')
+            return False
+        else:
+            LOG.info(f'"{name}" already exists as a non-present type, populating')
+            if ida_typeinf.idc_parse_types(f'struct {name}{{}};', 0):
+                LOG.warning(f'Failed')
+                return False
+            LOG.debug(f'Populated struct type "{name}"')
+    else:
+        tid = idc.add_struc(idaapi.BADADDR, name, False)
+        struct = get_struc(tid)
+        if not struct:
+            LOG.warning("Failed")
+            return False
+        LOG.debug(f'Created new struct type "{name}"')
+
+    error = idc.add_struc_member(tid, "field_0", 0, (TYPES[1]|idaapi.FF_DATA )&0xFFFFFFFF, -1, size)
+    if error:
+        LOG.warning(f'Error {error} adding new member')
+        return False
+
+    return True
+
 '''
 Provides a 'Make struct' option in the dissasembly context right-click dropdown list,
 whenever the cursor is on a number.
@@ -196,40 +248,7 @@ class MakeStruct(actions.HexRaysPopupAction):
         if not name:
             return False
 
-        if not size or size <= 0:
-            LOG.warning(f'Illegal size {size}')
-            return False
-
-        tid = ida_typeinf.get_named_type_tid(name)
-        if tid != idaapi.BADADDR:
-            tif = ida_typeinf.tinfo_t()
-            if not tif.get_type_by_tid(tid):
-                LOG.warning(f'"{name}" has a tid but no type - bug in IDA?')
-                return False
-            if tif.present():
-                LOG.warning(f'"{name}" already exists')
-                return False
-            else:
-                LOG.info(f'"{name}" already exists as a non-present type, populating')
-                if ida_typeinf.idc_parse_types(f'struct {name}{{}};', 0):
-                    LOG.warning(f'Failed')
-                    return False
-                LOG.debug(f'Populated struct type "{name}"')
-        else:
-            tid = idc.add_struc(idaapi.BADADDR, name, False)
-            struct = get_struc(tid)
-            if not struct:
-                LOG.warning("Failed")
-                return False
-            LOG.debug(f'Created new struct type "{name}"')
-
-
-        error = idc.add_struc_member(tid, "field_0", 0, (TYPES[1]|idaapi.FF_DATA )&0xFFFFFFFF, -1, size)
-        if error:
-            LOG.warning(f'Error {error} adding new member')
-            return False
-
-        return True
+        return create_sized_struct(name, size)
 
 '''
 Provides a 'Make member' option in the dissasembly context right-click dropdown list,
@@ -866,16 +885,63 @@ def ask_analyze_vtable_info(default_name, default_this_type, default_symbol):
     form = AnalyzeVtableForm(default_name, default_this_type, default_symbol)
     return run_form(form, ['name', 'this_type', 'symbol'])
 
+def create_vtable_struct(ea, name, this_type, symbol=None, warn_large_vtable=True, count=None, show_errors=True):
+    """
+    Non-interactive core of 'analyze vtable': determine the vtable's size (unless already known
+    and passed via 'count'), validate 'this_type', build and parse the struct definition, apply
+    it to 'ea', and (if given) rename the vtable symbol. No dialogs - safe to call directly from
+    headless/scripted code.
+    Returns the new struct's name on success, or None on failure.
+    """
+    LOG.debug(f'Analyzing vtable at {hex(ea)}')
+
+    if count is None:
+        count = get_vtable_size(ea, warn_large_vtable=warn_large_vtable)
+    if not count:
+        report_error(f'Could not analyze vtable at {hex(ea)}', show_errors)
+        return None
+
+    tid = ida_typeinf.get_named_type_tid(name)
+    if tid != idaapi.BADADDR:
+        report_error(f'Type {name} already exists', show_errors)
+        return None
+
+    # Validate 'this_type' the same way it'll actually be used (as a function pointer argument),
+    # so an unknown/misspelled class type fails here with a clear message instead of as an opaque
+    # "Could not parse struct definition" once embedded in every entry of the vtable struct_def.
+    if idc.parse_decl(f'int (*__validate_this_type__)({this_type});', ida_typeinf.PT_SIL) is None:
+        report_error(f'"{this_type}" is not a known type. Define the class struct first (e.g. '
+                     f'with "Make struct"), or use "void *" for the type of \'this\'.', show_errors)
+        return None
+
+    struct_def = make_vtable_def(ea, name, count, this_type)
+
+    if ida_typeinf.idc_parse_types(struct_def, 0):
+        report_error(f'Could not parse struct definition', show_errors)
+        LOG.debug(struct_def)
+        return None
+
+    LOG.info(f'Created new struct type {name}')
+
+    if not apply_struct(ea, name):
+        report_error(f'Could not apply vtable struct {name} to address {ea}', show_errors)
+        return None
+
+    if symbol and not ida_name.set_name(ea, symbol, ida_name.SN_NOCHECK):
+        report_error(f'Could not rename vtable at {hex(ea)} to {symbol}', show_errors)
+
+    return name
+
+
 def analyze_vtable(ea):
     """
     Interactive flow shared by AnalyzeVtable and SetVtable: determine the vtable's size,
     ask for a (optional) class name, then ask for the vtable struct name, the type of 'this',
     and the vtable symbol name - defaulting respectively to 'vtable_<class>', '<class> *' and
-    '<class>::__vtable' (with <class> defaulting to 'class_<ea>' if left blank). Creates the
-    struct definition, applies it to 'ea', and renames the vtable symbol.
+    '<class>::__vtable' (with <class> defaulting to 'class_<ea>' if left blank) - then hands off
+    to create_vtable_struct() for the actual work.
     Returns the new struct's name on success, or None if cancelled or failed.
     """
-    LOG.debug(f'Analyzing vtable at {hex(ea)}')
     count = get_vtable_size(ea)
     if not count:
         ida_kernwin.warning(f'Could not analyze vtable at {hex(ea)}')
@@ -891,37 +957,7 @@ def analyze_vtable(ea):
     if not name:
         return None
 
-    tid = ida_typeinf.get_named_type_tid(name)
-    if tid != idaapi.BADADDR:
-        ida_kernwin.warning(f'Type {name} already exists')
-        return None
-
-    # Validate 'this_type' the same way it'll actually be used (as a function pointer argument),
-    # so an unknown/misspelled class type fails here with a clear message instead of as an opaque
-    # "Could not parse struct definition" once embedded in every entry of the vtable struct_def.
-    if idc.parse_decl(f'int (*__validate_this_type__)({this_type});', ida_typeinf.PT_SIL) is None:
-        ida_kernwin.warning(
-            f'"{this_type}" is not a known type. Define the class struct first (e.g. with '
-            f'"Make struct"), or use "void *" for the type of \'this\'.')
-        return None
-
-    struct_def = make_vtable_def(ea, name, count, this_type)
-
-    if ida_typeinf.idc_parse_types(struct_def, 0):
-        ida_kernwin.warning(f'Could not parse struct definition')
-        LOG.debug(struct_def)
-        return None
-
-    LOG.info(f'Created new struct type {name}')
-
-    if not apply_struct(ea, name):
-        ida_kernwin.warning(f'Could not apply vtable struct {name} to address {ea}')
-        return None
-
-    if symbol and not ida_name.set_name(ea, symbol, ida_name.SN_NOCHECK):
-        ida_kernwin.warning(f'Could not rename vtable at {hex(ea)} to {symbol}')
-
-    return name
+    return create_vtable_struct(ea, name, this_type, symbol, count=count)
 
 
 def set_member_type_to_pointer(struct_name, member_offset, pointee_type_name):
@@ -1440,6 +1476,57 @@ class RemoveVtable(actions.HexRaysPopupAction):
         hx_view.refresh_view(True)
 
 
+def resolve_vtable_implementations(struct_name, member_offset, slot_offset, warn_large_vtable=False, show_errors=True):
+    """
+    Non-interactive core of 'jump to implementation': for each vtable registered on the given
+    struct member, resolve the implementation at 'slot_offset' (pruning vtables too small to
+    actually have an entry there). No dialogs - safe to call directly from headless/scripted code.
+    Returns a (possibly empty) list of (func_ea, vtable_ea, vtable_type, vtable_sym, func_sym)
+    tuples, one per vtable with a usable entry at that slot.
+    """
+    vtables = get_registered_vtables(struct_name, member_offset)
+    if not vtables:
+        report_error(f'No vtables registered for struct {struct_name} offset {hex(member_offset)}', show_errors)
+        return []
+
+    ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+    slot_index = slot_offset // ptr_size
+
+    candidates = []
+    for vtable_ea in vtables:
+
+        # Prune vtables too small to actually have an entry at this slot - this happens
+        # when an extending class calls a virtual function the base class doesn't declare,
+        # and some of the registered vtables belong to base classes. Without this check we'd
+        # read past the end of the vtable: possibly into unrelated data/another vtable, or a
+        # stray qword that isn't a function pointer at all.
+        vtable_size = get_vtable_size(vtable_ea, warn_large_vtable=warn_large_vtable)
+        if slot_index >= vtable_size:
+            LOG.debug(f'Pruning vtable {hex(vtable_ea)}: has {vtable_size} entries, slot index is {slot_index}')
+            continue
+
+        func_ea_ptr = vtable_ea + slot_offset
+        if ptr_size == 8:
+            func_ea = ida_bytes.get_qword(func_ea_ptr)
+        else:
+            func_ea = ida_bytes.get_dword(func_ea_ptr)
+
+        if not func_ea:
+            LOG.debug(f'No function pointer at {hex(func_ea_ptr)} (vtable {hex(vtable_ea)})')
+            continue
+
+        vtable_type = idc.get_type(vtable_ea)
+        vtable_sym = ida_name.get_ea_name(vtable_ea)
+        func_sym = idaapi.get_ea_name(func_ea, idaapi.GN_SHORT | idaapi.GN_DEMANGLED)
+        candidates.append((func_ea, vtable_ea, vtable_type, vtable_sym, func_sym))
+
+    if not candidates:
+        report_error(f'Could not resolve an implementation at offset {hex(slot_offset)} for any '
+                     f'registered vtable (too small, or no function pointer present)', show_errors)
+
+    return candidates
+
+
 class ImplementationChooser(ida_kernwin.Choose):
     def __init__(self, items):
         # items should be a list of lists: [[col1, col2, col3, col4, col5], ...]
@@ -1513,46 +1600,8 @@ class JumpToImplementation(actions.HexRaysPopupAction):
             LOG.error(f'member_expr.op is not memptr or memref')
             return
 
-        vtables = get_registered_vtables(struct_typename, member_offset)
-        if not vtables:
-            ida_kernwin.warning(f'No vtables registered for struct {struct_typename} offset {hex(member_offset)}')
-            return
-
-        ptr_size = 8 if ida_ida.inf_is_64bit() else 4
-        slot_index = slot_offset // ptr_size
-
-        candidates = []
-        for vtable_ea in vtables:
-
-            # Prune vtables too small to actually have an entry at this slot - this happens
-            # when an extending class calls a virtual function the base class doesn't declare,
-            # and some of the registered vtables belong to base classes. Without this check we'd
-            # read past the end of the vtable: possibly into unrelated data/another vtable, or a
-            # stray qword that isn't a function pointer at all.
-            # warn_large_vtable=False: this is just a size check on an already-registered vtable,
-            # possibly repeated across several candidates - don't interrupt with a prompt per one.
-            vtable_size = get_vtable_size(vtable_ea, warn_large_vtable=False)
-            if slot_index >= vtable_size:
-                LOG.debug(f'Pruning vtable {hex(vtable_ea)}: has {vtable_size} entries, slot index is {slot_index}')
-                continue
-
-            func_ea_ptr = vtable_ea + slot_offset
-            if ptr_size == 8:
-                func_ea = ida_bytes.get_qword(func_ea_ptr)
-            else:
-                func_ea = ida_bytes.get_dword(func_ea_ptr)
-
-            if not func_ea:
-                LOG.debug(f'No function pointer at {hex(func_ea_ptr)} (vtable {hex(vtable_ea)})')
-                continue
-
-            vtable_type = idc.get_type(vtable_ea)
-            vtable_sym = ida_name.get_ea_name(vtable_ea)
-            func_sym = idaapi.get_ea_name(func_ea, idaapi.GN_SHORT | idaapi.GN_DEMANGLED)
-            candidates.append((func_ea, vtable_ea, vtable_type, vtable_sym, func_sym))
-
+        candidates = resolve_vtable_implementations(struct_typename, member_offset, slot_offset)
         if not candidates:
-            ida_kernwin.warning(f'Could not resolve an implementation at offset {hex(slot_offset)} for any registered vtable (too small, or no function pointer present)')
             return
 
         options = []
