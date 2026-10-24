@@ -1221,7 +1221,7 @@ class JumpToVtable(actions.HexRaysPopupAction):
         elif e.op == idaapi.cot_memref:
             typeinfo = e.x.type
         else:
-            logging.error(f'e.op is not memptr or memref')
+            LOG.error(f'e.op is not memptr or memref')
             return
 
         struct_typename = typeinfo.get_type_name()
