@@ -695,7 +695,7 @@ def ptr_points_to_code(ea):
 
     return False
 
-def get_vtable_size(ea):
+def get_vtable_size(ea, warn_large_vtable=True):
 
     func = ida_funcs.get_func(ea)
     if func:
@@ -748,10 +748,15 @@ def get_vtable_size(ea):
 
         # Sanity check: a wrongly-chosen address could land in a long run of valid code
         # pointers (e.g. a jump table) and scan far past any real vtable. Let the user bail
-        # out periodically instead of churning silently.
+        # out periodically instead of churning silently - unless warn_large_vtable is disabled
+        # (e.g. headless/scripted callers, where ask_yn can't show a dialog at all), in which
+        # case just log progress and keep scanning.
         entry_count = (endea-ea)//ptr_size
         if entry_count % 100 == 0:
-            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_BTN1,
+            if not warn_large_vtable:
+                LOG.debug(f'Vtable scan at {hex(ea)} reached {entry_count} entries, continuing '
+                          f'(warn_large_vtable=False)')
+            elif ida_kernwin.ask_yn(ida_kernwin.ASKBTN_BTN1,
                     f'Still scanning for the end of the vtable at {hex(ea)} - {entry_count} '
                     f'entries found so far. Continue scanning?') != ida_kernwin.ASKBTN_BTN1:
                 LOG.info(f'Vtable scan at {hex(ea)} stopped by user after {entry_count} entries')
@@ -1524,7 +1529,9 @@ class JumpToImplementation(actions.HexRaysPopupAction):
             # and some of the registered vtables belong to base classes. Without this check we'd
             # read past the end of the vtable: possibly into unrelated data/another vtable, or a
             # stray qword that isn't a function pointer at all.
-            vtable_size = get_vtable_size(vtable_ea)
+            # warn_large_vtable=False: this is just a size check on an already-registered vtable,
+            # possibly repeated across several candidates - don't interrupt with a prompt per one.
+            vtable_size = get_vtable_size(vtable_ea, warn_large_vtable=False)
             if slot_index >= vtable_size:
                 LOG.debug(f'Pruning vtable {hex(vtable_ea)}: has {vtable_size} entries, slot index is {slot_index}')
                 continue
