@@ -933,7 +933,7 @@ def append_member_comment(struct_name, member_offset, text, ignore_duplicate=Tru
         LOG.error(f'Failed to get struct id for {struct_name}')
         return False
 
-    old = idc.get_member_cmt(sid, member_offset)
+    old = idc.get_member_cmt(sid, member_offset) or ""
 
     if ignore_duplicate:
         if text in old:
