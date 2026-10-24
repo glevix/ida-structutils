@@ -528,6 +528,62 @@ class CommitType(actions.HexRaysPopupAction):
         new_tif.create_func(funcdata)
         idaapi.apply_tinfo(func_address, new_tif, idaapi.TINFO_DEFINITE)
 
+    '''
+    Helper to apply the new type to a vtable struct member's function pointer type - used when
+    the call target is a vtable slot (tcb->field_vtable->Func_18(...)) rather than a named
+    function, since there's no single function address to edit: the slot's declared signature in
+    the vtable struct is what should change instead.
+    '''
+    def apply_to_vtable_member(self, struct_name, member_offset, arg_index, arg_tinfo):
+
+        sid = idc.get_struc_id(struct_name)
+        if sid == idaapi.BADADDR:
+            LOG.warning(f'Failed to get struct id for {struct_name}')
+            return False
+
+        tif = ida_typeinf.tinfo_t()
+        if not (tif.get_type_by_tid(sid) and tif.is_udt()):
+            LOG.warning(f'Failed to get udt type for {struct_name}')
+            return False
+
+        udm = ida_typeinf.udm_t()
+        udm.offset = member_offset
+        idx = tif.find_udm(udm, ida_typeinf.STRMEM_AUTO)
+        if idx == -1:
+            LOG.warning(f'Could not find member at offset {hex(member_offset)} in {struct_name}')
+            return False
+
+        if not udm.type.is_funcptr():
+            LOG.warning(f'Member at offset {hex(member_offset)} in {struct_name} is not a function pointer')
+            return False
+
+        funcdata = ida_typeinf.func_type_data_t()
+        if not udm.type.get_pointed_object().get_func_details(funcdata):
+            LOG.warning(f'Could not get function details for member at offset {hex(member_offset)} in {struct_name}')
+            return False
+
+        if arg_index >= funcdata.size():
+            LOG.warning(f'Argument index {arg_index} is out of range for a {funcdata.size()}-argument slot')
+            return False
+
+        # Edit the argument type
+        funcdata.at(arg_index).type = arg_tinfo
+
+        # Rebuild the function pointer type and commit it to the member
+        new_func_tif = ida_typeinf.tinfo_t()
+        if not new_func_tif.create_func(funcdata):
+            LOG.warning(f'Could not rebuild function type for member at offset {hex(member_offset)} in {struct_name}')
+            return False
+
+        new_ptr_tif = ida_typeinf.tinfo_t()
+        new_ptr_tif.create_ptr(new_func_tif)
+
+        if tif.set_udm_type(idx, new_ptr_tif) != ida_typeinf.TERR_OK:
+            LOG.warning(f'Failed to set type of member at offset {hex(member_offset)} in {struct_name}')
+            return False
+
+        return True
+
     def activate(self, ctx):
 
         hx_view = idaapi.get_widget_vdui(ctx.widget)
@@ -559,6 +615,18 @@ class CommitType(actions.HexRaysPopupAction):
             return False
         elif function.op == idaapi.cot_obj:
             self.apply_to_object(function.obj_ea, function.type, index, typeinfo)
+            hx_view.refresh_view(True)
+            return True
+        elif function.op in (idaapi.cot_memptr, idaapi.cot_memref):
+            # Call through a vtable slot - there's no single function address to edit, so
+            # commit the type to the slot's own declared signature in the vtable struct instead
+            struct_name, member_offset = get_member_struct_and_offset(function)
+            if struct_name is None:
+                LOG.warning(f'Could not resolve vtable member for call target - aborting')
+                return False
+            if not self.apply_to_vtable_member(struct_name, member_offset, index, typeinfo):
+                ida_kernwin.warning(f'Failed to commit type to vtable member')
+                return False
             hx_view.refresh_view(True)
             return True
         else:

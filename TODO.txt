@@ -3,16 +3,20 @@ List of opens issues and planned features
 1. Itanium support
 	When available, use the offset-to-top and typeinfo pointers to better handle the vtable
 
-6. Extend 'Commit type' to work on virtual (vtable) calls, not just direct named-function calls.
-	Currently it only handles function.op == cot_obj and fails with "Unsupported function
-	expression type" on a call through a vtable member. Could reuse JumpToImplementation's
-	resolution logic to find the candidate implementation(s) and commit the type there.
-
 7. Reverse lookup: given a function, find which vtable slots (across which structs) point to it.
 	Useful for finding all the ways a virtual function can be reached. Needs a database-wide
 	scan of VTABLE: comments/vtable contents, so more involved than the other items here.
 
 DONE
+
+6. Extend 'Commit type' to work on virtual (vtable) calls, not just direct named-function calls.
+	Currently it only handles function.op == cot_obj and fails with "Unsupported function
+	expression type" on a call through a vtable member.
+	Done - differently than originally scoped: instead of resolving to an implementation and
+	editing its signature, CommitType now edits the vtable slot's own declared function pointer
+	type in the vtable struct (via the new apply_to_vtable_member()), since there's no single
+	implementation address for a virtual call and every implementation reached through that slot
+	should share the same declared signature.
 
 5. In 'analyze vtable', make the initial dialog box ask for both the vtable struct name, and the type of
 	'this', and the name for the vtable symbol. It should provide defaults for all of these, of the

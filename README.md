@@ -39,6 +39,10 @@ It works any time the memory access is contained within a byte array inside a st
 
 Right click on on of the arguments of a function call in the Hexrays decompiler view, and select 'Commit type'
 The signature of the function being called will be edited to accept the clicked-on type.
+If the call is through a vtable slot (e.g. `tcb->field_vtable->Func_18(tcb, x)`) rather than a
+named function, there's no single function address to edit - instead, the slot's own declared
+function pointer type in the vtable struct is updated, so every implementation accessed through
+that slot is affected.
 
 ### AnalyzeVtable
 
