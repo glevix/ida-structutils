@@ -1169,9 +1169,21 @@ class JumpToImplementation(actions.HexRaysPopupAction):
             return
 
         ptr_size = 8 if ida_ida.inf_is_64bit() else 4
+        slot_index = slot_offset // ptr_size
 
         candidates = []
         for vtable_ea in vtables:
+
+            # Prune vtables too small to actually have an entry at this slot - this happens
+            # when an extending class calls a virtual function the base class doesn't declare,
+            # and some of the registered vtables belong to base classes. Without this check we'd
+            # read past the end of the vtable: possibly into unrelated data/another vtable, or a
+            # stray qword that isn't a function pointer at all.
+            vtable_size = get_vtable_size(vtable_ea)
+            if slot_index >= vtable_size:
+                LOG.debug(f'Pruning vtable {hex(vtable_ea)}: has {vtable_size} entries, slot index is {slot_index}')
+                continue
+
             func_ea_ptr = vtable_ea + slot_offset
             if ptr_size == 8:
                 func_ea = ida_bytes.get_qword(func_ea_ptr)
@@ -1188,7 +1200,7 @@ class JumpToImplementation(actions.HexRaysPopupAction):
             candidates.append((func_ea, vtable_ea, vtable_type, vtable_sym, func_sym))
 
         if not candidates:
-            ida_kernwin.warning(f'Could not resolve an implementation at offset {hex(slot_offset)} for any registered vtable')
+            ida_kernwin.warning(f'Could not resolve an implementation at offset {hex(slot_offset)} for any registered vtable (too small, or no function pointer present)')
             return
 
         options = []

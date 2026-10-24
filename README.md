@@ -67,9 +67,13 @@ If multiple vtable commented have been set for the memeber, you will be provided
 Right click on a vtable slot being called in the Hexrays decompiler view (e.g. the 'Func_18' in
 `tcb->field_vtable->Func_18(tcb)`, where 'field_vtable' was previously tagged with SetVtableComment),
 and select "Jump to implementation" (or click on the slot and hit the hotkey "Ctrl-J").
-For each vtable address registered on 'field_vtable', the called slot's offset is added and
-dereferenced to find the actual implementing function, and the disassembly/pseudocode view jumps
-there directly - no need to jump to the vtable first and double-click the right entry.
+For each vtable address registered on 'field_vtable', the vtable's size is determined (the same
+way AnalyzeVtable does) and candidates too small to have an entry at the called slot are pruned -
+this avoids offering a 'function' that is actually just the next vtable in memory, or a random
+qword, when a base class vtable is registered on the member but doesn't declare the called virtual
+function. For each remaining candidate, the called slot's offset is added and dereferenced to find
+the actual implementing function, and the disassembly/pseudocode view jumps there directly - no
+need to jump to the vtable first and double-click the right entry.
 If multiple vtables are registered for the member, you will be provided with a chooser listing each
 candidate's vtable type, vtable symbol name, vtable address, function symbol name, and function
 address, to choose from.
